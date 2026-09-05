@@ -350,7 +350,6 @@ function cleanSnippetItems(items: Array<UserSnippetItem | string> | undefined | 
 }
 
 const VOICE_CONTEXTUAL_STRINGS = [
-  "CJMUX",
   "AMUX",
   "Codex",
   "Claude",
@@ -1848,7 +1847,7 @@ function VisionModeGate({
         <Image source={APP_LOGO} style={styles.loginLogo} resizeMode="contain" />
         <Text style={styles.loginTitle}>Choose controls</Text>
         <Text style={styles.loginText}>
-          Are you using Apple Vision Pro? Choose before CJMUX shows any text field.
+          Are you using Apple Vision Pro? Choose before AMUX shows any text field.
         </Text>
         <View style={styles.visionModeActions}>
           <Pressable
@@ -4728,7 +4727,7 @@ function EmbeddedSshModal({
   const isWide = windowWidth / fontScale >= 760;
   const deviceLabel =
     Constants.deviceName ||
-    (Platform.OS === "ios" && Platform.isPad ? "CJMUX on iPad" : "CJMUX on iPhone");
+    (Platform.OS === "ios" && Platform.isPad ? "AMUX on iPad" : "AMUX on iPhone");
 
   const loadDraft = React.useCallback((nextProfile: StoredSshProfile | null, nextHost: string) => {
     setHost(nextProfile?.host || nextHost);
@@ -5104,7 +5103,7 @@ function EmbeddedSshModal({
       <View style={styles.sshSetupIntro}>
         <Text style={styles.sshSetupTitle}>Manual SSH fallback</Text>
         <Text style={styles.sshMutedText}>
-          CJMUX normally installs this app installation’s public key automatically. Use this form
+          AMUX normally installs this app installation’s public key automatically. Use this form
           only when the Controller or Connector cannot authorize it.
         </Text>
       </View>

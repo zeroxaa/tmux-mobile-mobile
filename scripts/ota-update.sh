@@ -20,7 +20,7 @@ export EAS_UPDATE_CHANNEL="$CHANNEL"
 export BUILD_TIME="${BUILD_TIME:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
 export JS_UPDATE_VERSION="${JS_UPDATE_VERSION:-$(date -u '+%Y%m%d.%H%M%S')}"
 
-echo "Publishing CJMUX OTA"
+echo "Publishing AMUX OTA"
 echo "  channel: $CHANNEL"
 echo "  app env: $APP_ENV"
 echo "  js version: $JS_UPDATE_VERSION"
