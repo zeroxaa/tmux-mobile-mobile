@@ -18,7 +18,6 @@ import {
   TextInput,
   View,
   StyleSheet,
-  useColorScheme,
   useWindowDimensions,
 } from "react-native";
 import type { StyleProp, TextInputProps, TextStyle } from "react-native";
@@ -37,6 +36,7 @@ import {
 import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-speech-recognition";
 import { StatusBar } from "expo-status-bar";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Markdown, { type RenderRules } from "react-native-markdown-display";
 import { toByteArray } from "base64-js";
@@ -60,12 +60,19 @@ import {
   ArrowDown,
   ArrowUp,
   CheckCircle,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
   CloudDownload,
   Copy,
   Edit3,
   Eye,
   ExternalLink,
+  File,
   FileText,
+  Folder,
+  Image as ImageIcon,
   ImagePlus,
   Info,
   Link2,
@@ -76,6 +83,7 @@ import {
   MessageSquareText,
   Mic,
   MicOff,
+  Minimize2,
   Minus,
   MoreVertical,
   Moon,
@@ -137,6 +145,7 @@ import {
   fileViewerEndpoint,
   resolveLinkedFilePath,
   splitFilePathText,
+  splitLinkableText,
 } from "@/tmux-mobile/file-links";
 import {
   artifactOpenMode,
@@ -157,6 +166,26 @@ import {
   sessionCardSummary,
   sessionModelLabel,
 } from "@/tmux-mobile/session-card";
+import {
+  groupAgentSessions,
+  groupIndexForAgent,
+  nextExpandedAgentKey,
+  type AgentSessionGroup,
+} from "@/tmux-mobile/session-groups";
+import { nextTerminalFollowState } from "@/tmux-mobile/terminal-follow";
+import {
+  fileBrowserLocationLabel,
+  isFileBrowserImage,
+  isFileBrowserMarkdown,
+  joinFileBrowserPath,
+  parentFileBrowserPath,
+} from "@/tmux-mobile/file-browser";
+import {
+  quantizeLiveTerminalTextScale,
+  readTerminalTextScale,
+  snapTerminalTextScale,
+  TERMINAL_TEXT_SCALE_STORAGE_KEY,
+} from "@/tmux-mobile/terminal-zoom";
 import {
   FONT_SCALE_LABELS,
   FONT_SCALE_LEVELS,
@@ -183,6 +212,7 @@ import type {
   AgentSession,
   AgentTranscriptResponse,
   ArtifactPin,
+  FileBrowserResponse,
   Machine,
   UserSnippetItem,
   WindowViewResponse,
@@ -309,9 +339,9 @@ type ResponsiveLayout = {
 function createResponsiveLayout(width = 390, height = 844, fontScale = 1): ResponsiveLayout {
   const effectiveWidth = width / fontScale;
   const isWide = effectiveWidth >= 760;
-  const listColumns = effectiveWidth >= 1180 ? 3 : effectiveWidth >= 760 ? 2 : 1;
-  const gutter = isWide ? 18 : 16;
-  const contentMaxWidth = isWide ? Math.min(width - gutter * 2, 1240) : width;
+  const listColumns = 1;
+  const gutter = isWide ? 20 : 16;
+  const contentMaxWidth = isWide ? Math.min(width - gutter * 2, 820) : width;
   return {
     width,
     height,
@@ -319,9 +349,9 @@ function createResponsiveLayout(width = 390, height = 844, fontScale = 1): Respo
     listColumns,
     gutter,
     contentMaxWidth,
-    sheetMaxWidth: isWide ? Math.min(width - gutter * 2, 760) : width,
+    sheetMaxWidth: isWide ? Math.min(width - gutter * 2, 820) : width,
     menuWidth: Math.min(width - gutter * 2, (isWide ? 300 : 226) * fontScale),
-    cardPadding: isWide ? 16 : 14,
+    cardPadding: 16,
     sessionPillMaxWidth: isWide ? 176 : 132,
   };
 }
@@ -447,10 +477,12 @@ type AgentFileTarget = {
 };
 type FilePreviewOrigin =
   | { kind: "response"; agent: AgentSession }
-  | { kind: "transcript"; agent: AgentSession };
+  | { kind: "transcript"; agent: AgentSession }
+  | { kind: "terminal"; agent: AgentSession };
 type MarkdownPathRuleOptions = {
   agent?: AgentSession | null;
   basePath?: string;
+  onOpenUrl?: (url: string) => void;
   selectable?: boolean;
 };
 
@@ -472,11 +504,6 @@ function useFontScale() {
 
 function useFieldPresentation(field: VisionFieldId) {
   return resolveFieldPresentation(field, useVisionControls());
-}
-
-function activityTime(agent: AgentSession): number {
-  const value = Date.parse(String(sessionCardSummary(agent).lastActivityAt || ""));
-  return Number.isFinite(value) ? value : 0;
 }
 
 function agentIsWorking(agent: AgentSession): boolean {
@@ -650,9 +677,13 @@ function createMarkdownPathRules(
     text: (node, _children, parentNodes, styles, inheritedStyles = {}) => {
       const content = String(node.content || "");
       const insideLink = parentNodes.some((parent) => parent?.type === "link" || parent?.type === "blocklink");
-      const parts = insideLink ? [{ kind: "text" as const, text: content }] : splitFilePathText(content);
-      const hasFile = parts.some((part) => part.kind === "file");
-      if (!hasFile) {
+      const parts = insideLink
+        ? [{ kind: "text" as const, text: content }]
+        : options.onOpenUrl
+          ? splitLinkableText(content)
+          : splitFilePathText(content);
+      const hasInteractivePart = parts.some((part) => part.kind !== "text");
+      if (!hasInteractivePart) {
         return (
           <Text key={node.key} selectable={selectable} style={[inheritedStyles, styles.text]}>
             {content}
@@ -666,8 +697,19 @@ function createMarkdownPathRules(
               <Text
                 key={`${node.key}-file-${index}`}
                 accessibilityRole="link"
+                selectable={selectable}
                 style={styles.filePathLink || styles.link}
                 onPress={() => onOpenPath(resolveLinkedFilePath(part.path, options.basePath))}
+              >
+                {part.text}
+              </Text>
+            ) : part.kind === "url" ? (
+              <Text
+                key={`${node.key}-url-${index}`}
+                accessibilityRole="link"
+                selectable={selectable}
+                style={styles.link}
+                onPress={() => options.onOpenUrl?.(part.href)}
               >
                 {part.text}
               </Text>
@@ -721,17 +763,12 @@ function createMarkdownPathRules(
   };
 }
 
-function compareRecentActivity(a: AgentSession, b: AgentSession): number {
-  return activityTime(b) - activityTime(a);
-}
-
 export default function CommandCenterRoute() {
   return <CommandCenterScreen />;
 }
 
 function CommandCenterScreen() {
   const insets = useSafeAreaInsets();
-  const systemScheme = useColorScheme();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const auth = useTmuxMobileAuth();
   const api = useTmuxMobileApi();
@@ -742,9 +779,7 @@ function CommandCenterScreen() {
   const cardStars = useCardStars();
   const toggleCardStar = useToggleCardStar();
   const deleteWindow = useDeleteWindow();
-  const [themeMode, setThemeMode] = React.useState<ThemeMode>(
-    systemScheme === "dark" ? "dark" : "light",
-  );
+  const [themeMode, setThemeMode] = React.useState<ThemeMode>("dark");
   const [fontScaleLevel, setFontScaleLevel] = React.useState<FontScaleLevel>("standard");
   const [fontScaleLoaded, setFontScaleLoaded] = React.useState(false);
   const [visionControlsPreference, setVisionControlsPreference] =
@@ -761,7 +796,7 @@ function CommandCenterScreen() {
   const [transcriptTarget, setTranscriptTarget] = React.useState<AgentSession | null>(null);
   const pendingFileTarget = React.useRef<AgentFileTarget | null>(null);
   const filePreviewOrigin = React.useRef<FilePreviewOrigin | null>(null);
-  const agentListRef = React.useRef<FlatList<AgentSession>>(null);
+  const agentListRef = React.useRef<FlatList<AgentSessionGroup>>(null);
   const shortcutReadGeneration = React.useRef(0);
   const shortcutReadAbort = React.useRef<AbortController | null>(null);
   const shortcutActiveRead = React.useRef<{
@@ -776,6 +811,7 @@ function CommandCenterScreen() {
   const [pinsVisible, setPinsVisible] = React.useState(false);
   const [settingsVisible, setSettingsVisible] = React.useState(false);
   const [selectedAgent, setSelectedAgent] = React.useState<AgentSession | null>(null);
+  const [expandedAgentKey, setExpandedAgentKey] = React.useState("");
   const [machineChipReadLoaded, setMachineChipReadLoaded] = React.useState(false);
   const [machineChipReadAt, setMachineChipReadAt] = React.useState<number | null>(null);
   const [relativeTimeTick, setRelativeTimeTick] = React.useState(0);
@@ -904,22 +940,19 @@ function CommandCenterScreen() {
     });
     return { all, byMachine };
   }, [machineReadThreshold, rawAgents]);
-  const agents = React.useMemo(() => {
+  const groupedAgents = React.useMemo(() => {
     const filtered =
       machineFilter === "all"
         ? rawAgents
         : rawAgents.filter((agent) => agentMachineKey(agent) === machineFilter);
-    const starredAgents: AgentSession[] = [];
-    const unstarredAgents: AgentSession[] = [];
-    filtered.forEach((agent) => {
-      if (isAgentStarred(agent, stars)) starredAgents.push(agent);
-      else unstarredAgents.push(agent);
-    });
-    return [
-      ...starredAgents.sort(compareRecentActivity),
-      ...unstarredAgents.sort(compareRecentActivity),
-    ];
-  }, [machineFilter, rawAgents, stars]);
+    return groupAgentSessions(
+      filtered,
+      stars,
+      machines.map((machine) => machineKey(machine)),
+    );
+  }, [machineFilter, machines, rawAgents, stars]);
+  const sessionGroups = groupedAgents.groups;
+  const agents = groupedAgents.agents;
 
   const toggleStar = React.useCallback(
     (agent: AgentSession) => {
@@ -1014,13 +1047,17 @@ function CommandCenterScreen() {
         pendingFileTarget.current = nextTarget;
         filePreviewOrigin.current = { kind: "transcript", agent: transcriptTarget };
         setTranscriptTarget(null);
+      } else if (viewTarget) {
+        pendingFileTarget.current = nextTarget;
+        filePreviewOrigin.current = { kind: "terminal", agent: viewTarget };
+        setViewTarget(null);
       } else {
         filePreviewOrigin.current = null;
         setFileTarget(nextTarget);
       }
       void Haptics.selectionAsync();
     },
-    [responseTarget, transcriptTarget],
+    [responseTarget, transcriptTarget, viewTarget],
   );
 
   const presentPendingFile = React.useCallback(() => {
@@ -1035,7 +1072,8 @@ function CommandCenterScreen() {
     filePreviewOrigin.current = null;
     if (!origin) return;
     if (origin.kind === "response") setResponseTarget(origin.agent);
-    else setTranscriptTarget(origin.agent);
+    else if (origin.kind === "transcript") setTranscriptTarget(origin.agent);
+    else setViewTarget(origin.agent);
   }, []);
 
   const signOut = React.useCallback(() => {
@@ -1114,13 +1152,13 @@ function CommandCenterScreen() {
       const nextIndex = Math.max(0, Math.min(agents.length - 1, currentIndex + delta));
       setSelectedAgent(agents[nextIndex] || null);
       agentListRef.current?.scrollToIndex({
-        index: Math.floor(nextIndex / columns),
+        index: groupIndexForAgent(sessionGroups, agents[nextIndex] || agents[0]),
         animated: true,
         viewPosition: 0.5,
       });
       void Haptics.selectionAsync();
     },
-    [activeShortcutAgent, agents, layout.listColumns],
+    [activeShortcutAgent, agents, layout.listColumns, sessionGroups],
   );
 
   const modalOpen = Boolean(
@@ -1496,11 +1534,13 @@ function CommandCenterScreen() {
       />
       <View style={styles.header}>
         <View style={styles.headerBrand}>
-          <Image source={APP_LOGO} style={styles.headerLogo} resizeMode="contain" accessible={false} />
+          <View style={styles.headerMark}>
+            <Terminal size={18} color={theme.colors.text} strokeWidth={2.2} />
+          </View>
           <View style={styles.headerTitleBlock}>
-            <Text style={styles.title}>AMUX</Text>
+            <Text style={styles.title}>Sessions</Text>
             <Text style={styles.headerMeta} numberOfLines={1}>
-              {auth.session.user.email || auth.baseUrl}
+              {groupedAgents.sessionCount} tmux · {agents.length} windows
             </Text>
           </View>
         </View>
@@ -1538,12 +1578,6 @@ function CommandCenterScreen() {
         onChange={selectMachineFilter}
       />
 
-      <View style={styles.summaryRow}>
-        <Text style={styles.countText}>
-          {agents.length} session{agents.length === 1 ? "" : "s"}
-        </Text>
-      </View>
-
       {commandCenter.error ? (
         <View style={styles.errorBox}>
           <Text style={styles.errorText}>{commandCenter.error.message}</Text>
@@ -1557,9 +1591,8 @@ function CommandCenterScreen() {
 
       <FlatList
         ref={agentListRef}
-        key={`agent-grid-${layout.listColumns}`}
-        data={agents}
-        keyExtractor={agentCardKey}
+        data={sessionGroups}
+        keyExtractor={(group) => group.key}
         onScrollToIndexFailed={({ index, averageItemLength }) => {
           agentListRef.current?.scrollToOffset({
             offset: Math.max(0, index * averageItemLength),
@@ -1569,12 +1602,10 @@ function CommandCenterScreen() {
         style={styles.listViewport}
         contentContainerStyle={[
           styles.listContent,
-          { paddingBottom: insets.bottom + 24 },
+          { paddingBottom: insets.bottom + 96 },
           agents.length === 0 ? styles.emptyList : null,
         ]}
-        numColumns={layout.listColumns}
-        columnWrapperStyle={layout.listColumns > 1 ? styles.cardColumnWrapper : undefined}
-        extraData={relativeTimeTick}
+        extraData={`${relativeTimeTick}:${selectedAgent ? agentCardKey(selectedAgent) : ""}:${expandedAgentKey}`}
         refreshControl={
           <RefreshControl
             refreshing={commandCenter.isFetching}
@@ -1591,66 +1622,110 @@ function CommandCenterScreen() {
             </Text>
           </View>
         }
-        renderItem={({ item }) => {
-          const key = agentCardKey(item);
-          const starred = isAgentStarred(item, stars);
-          const selectAgent = () => setSelectedAgent(item);
-          return (
-            <View style={styles.cardGridItem}>
-            <AgentCard
-              agent={item}
-              nowMs={relativeTimeNow}
-              starred={starred}
-              selected={selectedAgent ? agentCardKey(selectedAgent) === key : false}
-              onToggleStar={() => toggleStar(item)}
-              onSelect={selectAgent}
-              onSend={() => {
-                selectAgent();
-                setSendTarget(item);
-              }}
-              onRename={() => {
-                selectAgent();
-                setRenameTarget(item);
-              }}
-              onDelete={() => {
-                selectAgent();
-                confirmDeleteAgent(item);
-              }}
-              onView={() => {
-                selectAgent();
-                setViewTarget(item);
-              }}
-              onSsh={
-                embeddedSshAvailable
-                  ? () => {
-                      selectAgent();
-                      setSshTarget(item);
-                    }
-                  : undefined
-              }
-              onViewResponse={() => {
-                selectAgent();
-                setResponseTarget(item);
-              }}
-              onCopyResponse={() => {
-                selectAgent();
-                copyAssistantResponse(item).catch(() => {});
-              }}
-              onOpenFile={(path) => openAgentFile(item, path)}
-              responseCopied={copiedResponseKey === key}
-              onTranscript={() => {
-                selectAgent();
-                setTranscriptTarget(item);
-              }}
-            />
+        renderItem={({ item: group }) => (
+          <View style={styles.sessionGroup}>
+            <View style={styles.sessionGroupHeader}>
+              <View style={styles.sessionGroupTitleBlock}>
+                <Text style={styles.sessionGroupTitle} numberOfLines={1}>
+                  {group.title}
+                </Text>
+                <Text style={styles.sessionGroupSubtitle} numberOfLines={1}>
+                  {group.subtitle}
+                </Text>
+              </View>
+              <Text style={styles.sessionGroupCount}>
+                {group.agents.length} window{group.agents.length === 1 ? "" : "s"}
+              </Text>
             </View>
-          );
-        }}
+            <View style={styles.sessionCardGrid}>
+              {group.agents.map((item) => {
+                const key = agentCardKey(item);
+                const starred = isAgentStarred(item, stars);
+                const selectAgent = () => setSelectedAgent(item);
+                const toggleExpanded = () => {
+                  selectAgent();
+                  setExpandedAgentKey((current) => nextExpandedAgentKey(current, key));
+                };
+                return (
+                  <View key={key} style={styles.cardGridItem}>
+                    <AgentCard
+                      agent={item}
+                      nowMs={relativeTimeNow}
+                      starred={starred}
+                      selected={selectedAgent ? agentCardKey(selectedAgent) === key : false}
+                      collapsible
+                      expanded={expandedAgentKey === key}
+                      showSessionName={group.kind === "starred"}
+                      onToggleStar={() => toggleStar(item)}
+                      onToggleExpanded={toggleExpanded}
+                      onSend={() => {
+                        selectAgent();
+                        setSendTarget(item);
+                      }}
+                      onRename={() => {
+                        selectAgent();
+                        setRenameTarget(item);
+                      }}
+                      onDelete={() => {
+                        selectAgent();
+                        confirmDeleteAgent(item);
+                      }}
+                      onView={() => {
+                        selectAgent();
+                        setViewTarget(item);
+                      }}
+                      onSsh={
+                        embeddedSshAvailable
+                          ? () => {
+                              selectAgent();
+                              setSshTarget(item);
+                            }
+                          : undefined
+                      }
+                      onViewResponse={() => {
+                        selectAgent();
+                        setResponseTarget(item);
+                      }}
+                      onCopyResponse={() => {
+                        selectAgent();
+                        copyAssistantResponse(item).catch(() => {});
+                      }}
+                      onOpenFile={(path) => openAgentFile(item, path)}
+                      responseCopied={copiedResponseKey === key}
+                      onTranscript={() => {
+                        selectAgent();
+                        setTranscriptTarget(item);
+                      }}
+                    />
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        )}
       />
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Start agent"
+        style={({ pressed }) => [
+          styles.newSessionFab,
+          { bottom: insets.bottom + 18 },
+          pressed ? styles.newSessionFabPressed : null,
+        ]}
+        onPress={openStartAgent}
+      >
+        <Plus size={22} color={theme.dark ? theme.colors.background : theme.colors.surface} strokeWidth={2.4} />
+      </Pressable>
 
       <SendModal target={sendTarget} onClose={() => setSendTarget(null)} />
       <RenameModal target={renameTarget} onClose={() => setRenameTarget(null)} />
-      <WindowViewModal target={viewTarget} onClose={() => setViewTarget(null)} />
+      <WindowViewModal
+        target={viewTarget}
+        onOpenFile={openAgentFile}
+        onClose={() => setViewTarget(null)}
+        onDismiss={presentPendingFile}
+      />
       <EmbeddedSshModal
         target={sshTarget}
         controllerUrl={auth.session.baseUrl || auth.baseUrl}
@@ -1924,7 +1999,7 @@ function MachineStrip({
         return (
           <Chip key={key} active={active === key} onPress={() => onChange(key)}>
             <View style={styles.machineChipContent}>
-              <Laptop size={14} color={active === key ? theme.colors.surfaceRaised : theme.colors.textMuted} />
+              <Laptop size={14} color={active === key ? theme.colors.text : theme.colors.textMuted} />
               <Text
                 style={[
                   styles.chipText,
@@ -2235,8 +2310,11 @@ function AgentCard({
   nowMs,
   starred,
   selected,
+  collapsible,
+  expanded,
+  showSessionName,
   onToggleStar,
-  onSelect,
+  onToggleExpanded,
   onSend,
   onRename,
   onDelete,
@@ -2252,8 +2330,11 @@ function AgentCard({
   nowMs: number;
   starred: boolean;
   selected: boolean;
+  collapsible: boolean;
+  expanded: boolean;
+  showSessionName: boolean;
   onToggleStar: () => void;
-  onSelect: () => void;
+  onToggleExpanded: () => void;
   onSend: () => void;
   onRename: () => void;
   onDelete: () => void;
@@ -2271,9 +2352,15 @@ function AgentCard({
   const status = agent.waitingForInput ? "waiting" : agent.status || agent.turn || "unverified";
   const running = status === "running";
   const summary = sessionCardSummary(agent);
+  const displayWindowIndex = agent.windowIndex ?? agent.index;
+  const displayWindowName =
+    displayWindowIndex === undefined || displayWindowIndex === null
+      ? summary.windowName
+      : `${displayWindowIndex}:${summary.windowName}`;
   const modelLabel = sessionModelLabel(agent);
   const activityLabel = relativeTimeLabel(summary.lastActivityAt, nowMs) || "No activity";
   const recentActivity = isRecentActivity(summary.lastActivityAt, nowMs);
+  const mutedActivity = !recentActivity;
   const statusStyle =
     running
       ? styles.statusRunning
@@ -2287,175 +2374,169 @@ function AgentCard({
     <View
       style={[
         styles.card,
-        running ? styles.cardRunning : null,
+        mutedActivity ? styles.cardMuted : null,
         selected ? styles.cardSelected : null,
       ]}
     >
-      <RunningCardEdge active={running} />
-      <Pressable
-        accessibilityLabel={starred ? "Unstar session" : "Star session"}
-        accessibilityState={{ selected: starred }}
-        style={[
-          styles.starButton,
-          starred ? styles.starButtonActive : null,
-        ]}
-        hitSlop={12}
-        onPress={onToggleStar}
-      >
-        <Star
-          size={18}
-          color={starred ? theme.colors.warning : theme.colors.textMuted}
-          fill={starred ? theme.colors.warning : "transparent"}
-        />
-      </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Window ${summary.windowName}. Session ${
-          summary.sessionName || "unnamed"
-        }. Directory ${summary.directory || "unknown"}. Machine ${
-          summary.machineName || "unknown"
-        }. Agent ${agent.kind || "unknown"}.${
-          modelLabel ? ` Model and reasoning effort ${modelLabel}.` : ""
-        } Status ${status}. Last activity ${activityLabel}.`}
-        accessibilityHint="Select session"
-        accessibilityState={{ selected }}
-        style={({ pressed }) => [
-          styles.cardSummary,
-          pressed ? styles.cardSummaryPressed : null,
-        ]}
-        onPress={onSelect}
-      >
-        <View style={styles.cardHeader}>
-          <View style={styles.agentAvatar}>
+      <View style={styles.sessionRowTop}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Open window ${summary.windowName}. Session ${
+            summary.sessionName || "unnamed"
+          }. Machine ${summary.machineName || "unknown"}. Agent ${agent.kind || "unknown"}. ${
+            modelLabel ? `Model and reasoning effort ${modelLabel}. ` : ""
+          }Status ${status}. Last activity ${activityLabel}.`}
+          accessibilityHint="Open the session terminal"
+          accessibilityState={{ selected }}
+          style={({ pressed }) => [
+            styles.sessionRowMain,
+            pressed ? styles.cardSummaryPressed : null,
+          ]}
+          onPress={onView}
+        >
+          <View style={styles.sessionIndicatorColumn}>
+            <View style={[styles.statusDot, statusStyle]} />
+          </View>
+          <View style={styles.sessionAgentGlyph}>
             {icon ? (
-              <Image source={icon} style={styles.agentIcon} resizeMode="contain" />
+              <Image source={icon} style={styles.sessionAgentIcon} resizeMode="contain" />
             ) : (
-              <Terminal size={18} color={theme.colors.text} />
+              <Terminal size={15} color={theme.colors.textMuted} />
             )}
           </View>
           <View style={styles.cardTitleBlock}>
             <View style={styles.cardTitleRow}>
               <Text style={styles.cardTitle} numberOfLines={1}>
-                {agentTitle(agent)}
+                {displayWindowName}
               </Text>
-              {agent.sessionName ? (
+              {showSessionName && agent.sessionName ? (
                 <Text style={styles.sessionPill} numberOfLines={1}>
                   {agent.sessionName}
                 </Text>
               ) : null}
             </View>
-            <View style={styles.cardMetaRow}>
-              <Text style={styles.cardMeta} numberOfLines={1}>
-                {agent.machineHostname || agentMachineKey(agent)} · {agent.kind || "agent"} ·{" "}
-                {agent.mux || "tmux"}
-              </Text>
-              <Text
-                style={[
-                  styles.cardActivityTime,
-                  recentActivity ? styles.cardActivityTimeRecent : null,
-                ]}
-                accessibilityLabel={`${
-                  recentActivity ? "Recent activity" : "Last activity"
-                }, ${exactTimeLabel(summary.lastActivityAt) || activityLabel}`}
-                numberOfLines={1}
-              >
-                {activityLabel}
-              </Text>
-            </View>
-            {modelLabel ? (
-              <Text style={styles.cardModelMeta} numberOfLines={1}>
-                {modelLabel}
-              </Text>
-            ) : null}
-          </View>
-        </View>
-      </Pressable>
-      <View style={styles.cardBody}>
-        <View style={styles.statusRow}>
-          <View style={[styles.statusDot, statusStyle]} />
-          <Text style={styles.statusText}>{status}</Text>
-          <Text style={styles.statusDivider}>·</Text>
-          <Text style={styles.statusText}>{agent.turnCount || 0} turns</Text>
-          {agent.cwd ? (
-            <>
-              <Text style={styles.statusDivider}>·</Text>
-              <Text style={styles.cwdText} numberOfLines={1}>
-                {agent.cwd}
-              </Text>
-            </>
-          ) : null}
-        </View>
-        {agent.lastUserText ? (
-          <View>
-            <CardSectionHeader label="Last prompt" timestamp={agent.lastUserAt} nowMs={nowMs} />
-            <Text style={styles.promptText} numberOfLines={2}>
-              {agent.lastUserText}
+            <Text style={styles.sessionPreview} numberOfLines={1}>
+              {agent.lastAssistantText || agent.lastUserText || agentSubtitle(agent) || "No transcript yet."}
             </Text>
-          </View>
-        ) : null}
-        {agent.lastAssistantText ? (
-          <View style={styles.responseBlock}>
-            <CardSectionHeader label="Last response" timestamp={agent.lastAssistantAt} nowMs={nowMs} />
-            <LinkedPathText
-              text={agent.lastAssistantText}
-              style={styles.answerText}
-              numberOfLines={3}
-              onOpenPath={onOpenFile}
-            />
-            <View style={styles.responseActions}>
-              <ActionButton
-                icon={<Maximize2 size={15} color={theme.colors.text} />}
-                label="Open response"
-                onPress={onViewResponse}
-              />
-              <ActionButton
-                icon={
-                  responseCopied ? (
-                    <Check size={15} color={theme.colors.success} />
-                  ) : (
-                    <Copy size={15} color={theme.colors.text} />
-                  )
-                }
-                label="Copy response"
-                onPress={onCopyResponse}
-              />
+            <View style={styles.sessionMetaRow}>
+              <Text style={styles.sessionStatusText} numberOfLines={1}>
+                {status}
+              </Text>
+              <Text style={styles.statusDivider}>·</Text>
+              <Text style={styles.sessionMetaText} numberOfLines={1}>
+                {agent.kind || "agent"}{modelLabel ? ` · ${modelLabel}` : ""}
+              </Text>
             </View>
           </View>
-        ) : null}
-        {!agent.lastUserText && !agent.lastAssistantText ? (
-          <Text style={styles.answerText} numberOfLines={2}>
-            {agentSubtitle(agent) || "No transcript yet."}
-          </Text>
-        ) : null}
-        <View style={styles.cardActions}>
-          <ActionButton icon={<Send size={15} color={theme.colors.text} />} label="Send" onPress={onSend} />
-          <ActionButton
-            icon={<Eye size={15} color={theme.colors.text} />}
-            label="Terminal"
-            showLabel
-            onPress={onView}
-          />
-          {onSsh ? (
-            <ActionButton
-              icon={<Laptop size={15} color={theme.colors.text} />}
-              label="SSH"
-              showLabel
-              onPress={onSsh}
+          <View style={styles.sessionRowTrailing}>
+            <Text
+              style={[
+                styles.cardActivityTime,
+                recentActivity ? styles.cardActivityTimeRecent : null,
+              ]}
+              accessibilityLabel={`${
+                recentActivity ? "Recent activity" : "Last activity"
+              }, ${exactTimeLabel(summary.lastActivityAt) || activityLabel}`}
+              numberOfLines={1}
+            >
+              {activityLabel}
+            </Text>
+            <ChevronRight size={15} color={theme.colors.textMuted} />
+          </View>
+        </Pressable>
+        <View style={styles.sessionRowControls}>
+          <Pressable
+            accessibilityLabel={starred ? "Unstar session" : "Star session"}
+            accessibilityState={{ selected: starred }}
+            style={styles.sessionRowIconButton}
+            hitSlop={4}
+            onPress={onToggleStar}
+          >
+            <Star
+              size={15}
+              color={starred ? theme.colors.warning : theme.colors.textMuted}
+              fill={starred ? theme.colors.warning : "transparent"}
             />
-          ) : null}
-          <ActionButton
-            icon={<MessageSquareText size={15} color={theme.colors.text} />}
-            label="Transcript"
-            onPress={onTranscript}
-          />
-          <ActionButton icon={<Edit3 size={15} color={theme.colors.text} />} label="Rename" onPress={onRename} />
-          <ActionButton
-            icon={<Trash2 size={15} color={theme.colors.danger} />}
-            label="Delete session"
-            onPress={onDelete}
-          />
+          </Pressable>
+          <Pressable
+            accessibilityLabel={expanded ? "Hide session actions" : "Show session actions"}
+            accessibilityState={{ expanded: collapsible ? expanded : undefined }}
+            style={styles.sessionRowIconButton}
+            hitSlop={4}
+            onPress={onToggleExpanded}
+          >
+            {expanded ? (
+              <ChevronUp size={16} color={theme.colors.textMuted} />
+            ) : (
+              <MoreVertical size={16} color={theme.colors.textMuted} />
+            )}
+          </Pressable>
         </View>
       </View>
+      {expanded ? (
+        <View style={styles.cardBody}>
+          <View style={styles.statusRow}>
+            <Text style={styles.statusText}>{agent.machineHostname || agentMachineKey(agent)}</Text>
+            <Text style={styles.statusDivider}>·</Text>
+            <Text style={styles.statusText}>{agent.mux || "tmux"}</Text>
+            <Text style={styles.statusDivider}>·</Text>
+            <Text style={styles.statusText}>{agent.turnCount || 0} turns</Text>
+            {agent.cwd ? (
+              <>
+                <Text style={styles.statusDivider}>·</Text>
+                <Text style={styles.cwdText} numberOfLines={1}>
+                  {agent.cwd}
+                </Text>
+              </>
+            ) : null}
+          </View>
+          {agent.lastUserText ? (
+            <View>
+              <CardSectionHeader label="Last prompt" timestamp={agent.lastUserAt} nowMs={nowMs} />
+              <Text style={styles.promptText} numberOfLines={2}>
+                {agent.lastUserText}
+              </Text>
+            </View>
+          ) : null}
+          {agent.lastAssistantText ? (
+            <View style={styles.responseBlock}>
+              <CardSectionHeader label="Last response" timestamp={agent.lastAssistantAt} nowMs={nowMs} />
+              <LinkedPathText
+                text={agent.lastAssistantText}
+                style={styles.answerText}
+                numberOfLines={3}
+                onOpenPath={onOpenFile}
+              />
+              <View style={styles.responseActions}>
+                <ActionButton
+                  icon={<Maximize2 size={15} color={theme.colors.text} />}
+                  label="Open response"
+                  onPress={onViewResponse}
+                />
+                <ActionButton
+                  icon={responseCopied ? <Check size={15} color={theme.colors.success} /> : <Copy size={15} color={theme.colors.text} />}
+                  label="Copy response"
+                  onPress={onCopyResponse}
+                />
+              </View>
+            </View>
+          ) : null}
+          <View style={styles.cardActions}>
+            <ActionButton icon={<Eye size={15} color={theme.colors.text} />} label="Terminal" showLabel onPress={onView} />
+            <ActionButton icon={<Send size={15} color={theme.colors.text} />} label="Send" showLabel onPress={onSend} />
+            <ActionButton icon={<MessageSquareText size={15} color={theme.colors.text} />} label="Transcript" showLabel onPress={onTranscript} />
+            {onSsh ? (
+              <ActionButton icon={<Laptop size={15} color={theme.colors.text} />} label="SSH" onPress={onSsh} />
+            ) : null}
+            <ActionButton
+              icon={<Edit3 size={15} color={theme.colors.text} />}
+              label="Rename"
+              onPress={onRename}
+            />
+            <ActionButton icon={<Trash2 size={15} color={theme.colors.danger} />} label="Delete session" onPress={onDelete} />
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -3692,6 +3773,8 @@ function PaneComposer({
   onOpenUpload,
   onShortcut,
   onClear,
+  clearInline = false,
+  singleShell = false,
   onRetry,
   recognizing = false,
   voiceRecording,
@@ -3723,6 +3806,8 @@ function PaneComposer({
   onOpenUpload?: () => void;
   onShortcut?: (value: string) => void;
   onClear?: () => void;
+  clearInline?: boolean;
+  singleShell?: boolean;
   onRetry?: () => void;
   recognizing?: boolean;
   voiceRecording?: boolean;
@@ -3736,7 +3821,7 @@ function PaneComposer({
   showShortcuts?: boolean;
   autoFocus?: boolean;
   multiline?: boolean;
-  placeholder: string;
+  placeholder?: string;
   status?: string;
   error?: string;
   retryLabel?: string;
@@ -3746,8 +3831,10 @@ function PaneComposer({
 }) {
   const theme = useAppTheme();
   const styles = useAppStyles();
+  const { height: viewportHeight } = useWindowDimensions();
   const visionControls = useVisionControls();
   const expanded = variant === "expanded";
+  const usesSingleShell = expanded && singleShell;
   const busy = sendBusy || keyBusy || uploadBusy;
   const controlDisabled = disabled || busy;
   const sendIsDisabled = disabled || sendDisabled || sendBusy || keyBusy;
@@ -3774,6 +3861,9 @@ function PaneComposer({
   const [snippetDraftItems, setSnippetDraftItems] = React.useState<UserSnippetItem[]>([]);
   const [snippetNewText, setSnippetNewText] = React.useState("");
   const [visionMoreVisible, setVisionMoreVisible] = React.useState(false);
+  const [singleShellPromptsExpanded, setSingleShellPromptsExpanded] = React.useState(false);
+  const singleShellPromptsVisible = usesSingleShell && singleShellPromptsExpanded;
+  const singleShellExpandedHeight = Math.max(180, Math.round(viewportHeight * 0.5));
   const snippetItems = React.useMemo(() => {
     const loaded = cleanSnippetItems(snippets.data?.items);
     return prioritizeGoalSnippet(
@@ -3784,6 +3874,10 @@ function PaneComposer({
   React.useEffect(() => {
     if (!visionControls) setVisionMoreVisible(false);
   }, [visionControls]);
+
+  React.useEffect(() => {
+    if (!usesSingleShell || disabled) setSingleShellPromptsExpanded(false);
+  }, [disabled, usesSingleShell]);
 
   const openSnippetManager = React.useCallback(() => {
     setSnippetDraftItems(snippetItems);
@@ -3889,6 +3983,10 @@ function PaneComposer({
         styles.paneComposerInput,
         expanded ? styles.paneComposerInputExpanded : styles.paneComposerInputCompact,
         expanded ? styles.paneComposerInputEmbedded : null,
+        usesSingleShell ? styles.paneComposerInputSingleShell : null,
+        usesSingleShell && !singleShellPromptsVisible
+          ? styles.paneComposerInputSingleShellCollapsed
+          : null,
       ]}
       placeholder={placeholder}
       placeholderTextColor={theme.colors.textMuted}
@@ -3914,6 +4012,114 @@ function PaneComposer({
       )}
     </Pressable>
   );
+
+  const clearButton =
+    expanded && clearInline && showClear ? (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Clear terminal input"
+        style={[
+          styles.paneComposerInlineButton,
+          value.length === 0 || standardVoiceActive ? styles.disabledButton : null,
+        ]}
+        disabled={disabled || value.length === 0 || standardVoiceActive}
+        onPress={() => {
+          onClear?.();
+          void Haptics.selectionAsync();
+        }}
+      >
+        <X
+          size={16}
+          color={value.length === 0 ? theme.colors.textMuted : theme.colors.text}
+        />
+      </Pressable>
+    ) : null;
+
+  const shortcutsBar = presentation.showShortcuts ? (
+    <View style={[styles.snippetBar, usesSingleShell ? styles.snippetBarEmbedded : null]}>
+      <ScrollView
+        horizontal
+        style={styles.snippetScroll}
+        showsHorizontalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={styles.snippetScrollContent}
+      >
+        {snippetItems.map((shortcut, index) => (
+          <Pressable
+            key={`${shortcut.text}-${index}`}
+            style={[
+              styles.shortcutChip,
+              standardVoiceActive ? styles.disabledButton : null,
+            ]}
+            disabled={disabled || standardVoiceActive}
+            onPress={() => {
+              onShortcut?.(shortcut.text);
+              void Haptics.selectionAsync();
+            }}
+          >
+            <Text style={styles.shortcutText} numberOfLines={1}>
+              {composerSnippetLabel(shortcut.text)}
+            </Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+      {showClear && !clearInline ? (
+        <Pressable
+          accessibilityLabel="Clear terminal input"
+          style={[
+            styles.snippetIconButton,
+            value.length === 0 || standardVoiceActive ? styles.disabledButton : null,
+          ]}
+          disabled={disabled || value.length === 0 || standardVoiceActive}
+          onPress={() => {
+            onClear?.();
+            void Haptics.selectionAsync();
+          }}
+        >
+          <X size={15} color={value.length === 0 ? theme.colors.textMuted : theme.colors.text} />
+        </Pressable>
+      ) : null}
+      <Pressable
+        accessibilityLabel="Manage shortcuts"
+        style={[
+          styles.snippetIconButton,
+          snippets.isFetching || standardVoiceActive ? styles.disabledButton : null,
+        ]}
+        disabled={disabled || standardVoiceActive}
+        onPress={openSnippetManager}
+      >
+        <ListPlus size={16} color={theme.colors.text} />
+      </Pressable>
+    </View>
+  ) : null;
+
+  const promptToggleButton = usesSingleShell && presentation.showShortcuts ? (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={
+        singleShellPromptsVisible
+          ? "Collapse terminal composer"
+          : "Expand terminal composer and show prompt shortcuts"
+      }
+      accessibilityState={{ expanded: singleShellPromptsVisible }}
+      style={[
+        styles.paneComposerInlineButton,
+        singleShellPromptsVisible ? styles.paneComposerInlineButtonActive : null,
+        standardVoiceActive ? styles.disabledButton : null,
+      ]}
+      disabled={disabled || standardVoiceActive}
+      onPress={() => {
+        setSingleShellPromptsExpanded((current) => !current);
+        void Haptics.selectionAsync();
+      }}
+    >
+      {singleShellPromptsVisible ? (
+        <Minimize2 size={17} color={activeIconColor} />
+      ) : (
+        <Maximize2 size={17} color={theme.colors.text} />
+      )}
+    </Pressable>
+  ) : null;
 
   if (visionControls) {
     return (
@@ -4093,74 +4299,42 @@ function PaneComposer({
   }
 
   return (
-    <View style={styles.paneComposer}>
-      {presentation.showShortcuts ? (
-        <View style={styles.snippetBar}>
-          <ScrollView
-            horizontal
-            style={styles.snippetScroll}
-            showsHorizontalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-            contentContainerStyle={styles.snippetScrollContent}
-          >
-            {snippetItems.map((shortcut, index) => (
-              <Pressable
-                key={`${shortcut.text}-${index}`}
-                style={[
-                  styles.shortcutChip,
-                  standardVoiceActive ? styles.disabledButton : null,
-                ]}
-                disabled={disabled || standardVoiceActive}
-                onPress={() => {
-                  onShortcut?.(shortcut.text);
-                  void Haptics.selectionAsync();
-                }}
-              >
-                <Text style={styles.shortcutText} numberOfLines={1}>
-                  {composerSnippetLabel(shortcut.text)}
-                </Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-          {showClear ? (
-            <Pressable
-              style={[
-                styles.snippetIconButton,
-                value.length === 0 || standardVoiceActive ? styles.disabledButton : null,
-              ]}
-              disabled={disabled || value.length === 0 || standardVoiceActive}
-              onPress={() => {
-                onClear?.();
-                void Haptics.selectionAsync();
-              }}
-            >
-              <X size={15} color={value.length === 0 ? theme.colors.textMuted : theme.colors.text} />
-            </Pressable>
-          ) : null}
-          <Pressable
-            accessibilityLabel="Manage shortcuts"
-            style={[
-              styles.snippetIconButton,
-              snippets.isFetching || standardVoiceActive ? styles.disabledButton : null,
-            ]}
-            disabled={disabled || standardVoiceActive}
-            onPress={openSnippetManager}
-          >
-            <ListPlus size={16} color={theme.colors.text} />
-          </Pressable>
-        </View>
-      ) : null}
+    <View style={[styles.paneComposer, usesSingleShell ? styles.paneComposerSingleShell : null]}>
+      {!usesSingleShell ? shortcutsBar : null}
       {expanded ? (
         <>
-          <View style={styles.paneComposerInputShell}>
+          <View
+            style={[
+              styles.paneComposerInputShell,
+              usesSingleShell ? styles.paneComposerInputShellSingle : null,
+              usesSingleShell
+                ? singleShellPromptsVisible
+                  ? { height: singleShellExpandedHeight }
+                  : styles.paneComposerInputShellSingleCollapsed
+                : null,
+            ]}
+          >
+            {singleShellPromptsVisible ? shortcutsBar : null}
             {input}
-            <View style={styles.paneComposerInlineActions}>
+            {usesSingleShell && (standardStatus || error) ? (
+              <Text style={styles.paneComposerEmbeddedStatus} numberOfLines={1}>
+                {standardStatus || error}
+              </Text>
+            ) : null}
+            <View
+              style={[
+                styles.paneComposerInlineActions,
+                usesSingleShell ? styles.paneComposerInlineActionsSingle : null,
+              ]}
+            >
               {uploadButton}
               {keysButton}
+              {promptToggleButton}
+              {clearButton}
               {sendButton}
             </View>
           </View>
-          {reserveStatusSpace || standardStatus || error ? (
+          {!usesSingleShell && (reserveStatusSpace || standardStatus || error) ? (
             <Text style={styles.paneComposerStatus} numberOfLines={1}>
               {standardStatus || error || ""}
             </Text>
@@ -5377,9 +5551,20 @@ function EmbeddedSshModal({
   );
 }
 
-function WindowViewModal({ target, onClose }: { target: AgentSession | null; onClose: () => void }) {
+function WindowViewModal({
+  target,
+  onOpenFile,
+  onClose,
+  onDismiss,
+}: {
+  target: AgentSession | null;
+  onOpenFile: (agent: AgentSession, path: string) => void;
+  onClose: () => void;
+  onDismiss?: () => void;
+}) {
   const theme = useAppTheme();
   const styles = useAppStyles();
+  const appFontScale = useFontScale();
   const visionControls = useVisionControls();
   const { width: windowWidth } = useWindowDimensions();
   const api = useTmuxMobileApi();
@@ -5387,6 +5572,7 @@ function WindowViewModal({ target, onClose }: { target: AgentSession | null; onC
   const sendKey = useSendKey();
   const uploadFile = useUploadFile();
   const paneTailScrollRef = React.useRef<ScrollView | null>(null);
+  const terminalUserScrollingRef = React.useRef(false);
   const pollingRef = React.useRef(false);
   const terminalInputRef = React.useRef("");
   const terminalDirectSendQueueRef = React.useRef<Promise<unknown>>(Promise.resolve());
@@ -5400,12 +5586,73 @@ function WindowViewModal({ target, onClose }: { target: AgentSession | null; onC
   const [terminalUploadPickerVisible, setTerminalUploadPickerVisible] = React.useState(false);
   const [terminalUploading, setTerminalUploading] = React.useState(false);
   const [terminalFollow, setTerminalFollow] = React.useState(true);
+  const [terminalTextScale, setTerminalTextScale] = React.useState(1);
+  const [fileBrowserVisible, setFileBrowserVisible] = React.useState(false);
+  const [fileBrowserData, setFileBrowserData] = React.useState<FileBrowserResponse | null>(null);
+  const [fileBrowserLoading, setFileBrowserLoading] = React.useState(false);
+  const [fileBrowserError, setFileBrowserError] = React.useState("");
   const [error, setError] = React.useState("");
   const [status, setStatus] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const terminalAutoFocus = windowWidth >= 760;
   const terminalTargetKey = target ? agentCardKey(target) : "";
   const previousTerminalTargetKeyRef = React.useRef("");
+  const terminalTextScaleRef = React.useRef(1);
+  const terminalPinchBaseRef = React.useRef(1);
+  const fileBrowserRequestRef = React.useRef(0);
+  const fileBrowserTargetKeyRef = React.useRef("");
+
+  React.useEffect(() => {
+    let mounted = true;
+    AsyncStorage.getItem(TERMINAL_TEXT_SCALE_STORAGE_KEY)
+      .then((value) => {
+        if (!mounted) return;
+        const next = readTerminalTextScale(value);
+        terminalTextScaleRef.current = next;
+        setTerminalTextScale(next);
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const terminalPinchGesture = React.useMemo(
+    () =>
+      Gesture.Simultaneous(
+        Gesture.Native(),
+        Gesture.Pinch()
+          .runOnJS(true)
+          .onStart(() => {
+            terminalPinchBaseRef.current = terminalTextScaleRef.current;
+          })
+          .onUpdate((event) => {
+            const next = quantizeLiveTerminalTextScale(
+              terminalPinchBaseRef.current * event.scale,
+            );
+            if (next === terminalTextScaleRef.current) return;
+            terminalTextScaleRef.current = next;
+            setTerminalTextScale(next);
+          })
+          .onEnd(() => {
+            const next = snapTerminalTextScale(terminalTextScaleRef.current);
+            const changed = next !== terminalPinchBaseRef.current;
+            terminalTextScaleRef.current = next;
+            setTerminalTextScale(next);
+            AsyncStorage.setItem(TERMINAL_TEXT_SCALE_STORAGE_KEY, String(next)).catch(() => {});
+            if (changed) void Haptics.selectionAsync();
+          }),
+      ),
+    [],
+  );
+
+  const terminalTextZoomStyle = React.useMemo(
+    () => ({
+      fontSize: Math.round(12 * appFontScale * terminalTextScale * 2) / 2,
+      lineHeight: Math.round(18 * appFontScale * terminalTextScale * 2) / 2,
+    }),
+    [appFontScale, terminalTextScale],
+  );
 
   React.useEffect(() => {
     terminalInputRef.current = terminalInput;
@@ -5466,6 +5713,60 @@ function WindowViewModal({ target, onClose }: { target: AgentSession | null; onC
   const machineId = target ? agentMachineKey(target) : "";
   const terminalScopeKey = terminalTargetKey;
   const activePaneId = data?.capture?.paneId || data?.activePaneId || target?.paneId || "";
+
+  React.useEffect(() => {
+    if (!terminalTargetKey || terminalTargetKey === fileBrowserTargetKeyRef.current) return;
+    fileBrowserTargetKeyRef.current = terminalTargetKey;
+    fileBrowserRequestRef.current += 1;
+    setFileBrowserVisible(false);
+    setFileBrowserData(null);
+    setFileBrowserLoading(false);
+    setFileBrowserError("");
+  }, [terminalTargetKey]);
+
+  const loadFileBrowser = React.useCallback(
+    async (relativePath = "", root?: string) => {
+      if (!api || !target || !activePaneId) return;
+      const requestId = ++fileBrowserRequestRef.current;
+      setFileBrowserLoading(true);
+      setFileBrowserError("");
+      try {
+        const result = await api.files(machineId, activePaneId, { root, path: relativePath });
+        if (requestId !== fileBrowserRequestRef.current) return;
+        setFileBrowserData(result);
+      } catch (err) {
+        if (requestId !== fileBrowserRequestRef.current) return;
+        setFileBrowserError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (requestId === fileBrowserRequestRef.current) setFileBrowserLoading(false);
+      }
+    },
+    [activePaneId, api, machineId, target],
+  );
+
+  const openFileBrowser = React.useCallback(() => {
+    if (!activePaneId) return;
+    Keyboard.dismiss();
+    setFileBrowserVisible(true);
+    void Haptics.selectionAsync();
+    if (fileBrowserData?.root) {
+      void loadFileBrowser(fileBrowserData.relativePath, fileBrowserData.root);
+    } else {
+      void loadFileBrowser();
+    }
+  }, [activePaneId, fileBrowserData, loadFileBrowser]);
+
+  const leaveFileBrowser = React.useCallback(() => {
+    if (fileBrowserData?.relativePath) {
+      void loadFileBrowser(
+        parentFileBrowserPath(fileBrowserData.relativePath),
+        fileBrowserData.root,
+      );
+      return;
+    }
+    setFileBrowserVisible(false);
+    void Haptics.selectionAsync();
+  }, [fileBrowserData, loadFileBrowser]);
   const refreshCapture = React.useCallback(
     async (silent = false) => {
       if (!api || !target || !activePaneId) return;
@@ -5503,6 +5804,7 @@ function WindowViewModal({ target, onClose }: { target: AgentSession | null; onC
         .catch(() => {})
         .then(action)
         .then(() => {
+          setTerminalFollow(true);
           setError("");
           scheduleTerminalRefresh();
         })
@@ -5575,6 +5877,15 @@ function WindowViewModal({ target, onClose }: { target: AgentSession | null; onC
 
   const terminalNodes = React.useMemo(() => renderAnsiText(terminalText), [terminalText]);
   const terminalShouldFollow = terminalFollow;
+  const updateTerminalFollowFromScroll = React.useCallback((metrics: {
+    offsetY: number;
+    viewportHeight: number;
+    contentHeight: number;
+  }) => {
+    setTerminalFollow((following) =>
+      nextTerminalFollowState(following, metrics, terminalUserScrollingRef.current),
+    );
+  }, []);
   const scrollPaneTailToEnd = React.useCallback((animated = false) => {
     requestAnimationFrame(() => {
       paneTailScrollRef.current?.scrollToEnd({ animated });
@@ -5692,6 +6003,7 @@ function WindowViewModal({ target, onClose }: { target: AgentSession | null; onC
   }, [uploadTerminalAssets]);
 
   const afterTerminalSend = React.useCallback(() => {
+    setTerminalFollow(true);
     setError("");
     setStatus("Sent");
     setTimeout(() => {
@@ -5780,76 +6092,274 @@ function WindowViewModal({ target, onClose }: { target: AgentSession | null; onC
     onClose();
   }, [onClose]);
 
+  const fileBrowserLocation = fileBrowserLocationLabel(
+    fileBrowserData?.root || data?.directories?.cwd || target?.cwd || "",
+    fileBrowserData?.relativePath || "",
+  );
+  const fileBrowserScreen = (
+    <View style={styles.fileBrowserScreen}>
+      <View style={styles.fileBrowserHeader}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={fileBrowserData?.relativePath ? "Go to parent folder" : "Back to terminal"}
+          style={({ pressed }) => [
+            styles.fileBrowserIconButton,
+            pressed ? styles.fileBrowserRowPressed : null,
+          ]}
+          onPress={leaveFileBrowser}
+        >
+          <ChevronLeft size={20} color={theme.colors.text} />
+        </Pressable>
+        <View style={styles.fileBrowserTitleBlock}>
+          <Text style={styles.fileBrowserTitle}>Files</Text>
+          <Text style={styles.fileBrowserPath} numberOfLines={1}>
+            {fileBrowserLocation || "Current terminal directory"}
+          </Text>
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Refresh files"
+          disabled={fileBrowserLoading || !activePaneId}
+          style={({ pressed }) => [
+            styles.fileBrowserIconButton,
+            pressed ? styles.fileBrowserRowPressed : null,
+            fileBrowserLoading || !activePaneId ? styles.disabledButton : null,
+          ]}
+          onPress={() => {
+            void loadFileBrowser(
+              fileBrowserData?.relativePath || "",
+              fileBrowserData?.root,
+            );
+          }}
+        >
+          {fileBrowserLoading ? (
+            <ActivityIndicator size="small" color={theme.colors.accent} />
+          ) : (
+            <RefreshCcw size={18} color={theme.colors.textMuted} />
+          )}
+        </Pressable>
+      </View>
+
+      {fileBrowserError ? (
+        <View style={styles.fileBrowserState}>
+          <AlertCircle size={22} color={theme.colors.danger} />
+          <Text style={styles.errorText}>{fileBrowserError}</Text>
+          <Pressable
+            style={({ pressed }) => [
+              styles.fileBrowserRetryButton,
+              pressed ? styles.fileBrowserRowPressed : null,
+            ]}
+            onPress={() => {
+              void loadFileBrowser(
+                fileBrowserData?.relativePath || "",
+                fileBrowserData?.root,
+              );
+            }}
+          >
+            <Text style={styles.fileBrowserRetryText}>Retry</Text>
+          </Pressable>
+        </View>
+      ) : !fileBrowserData && fileBrowserLoading ? (
+        <View style={styles.fileBrowserState}>
+          <ActivityIndicator color={theme.colors.accent} />
+          <Text style={styles.emptyText}>Reading terminal directory…</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={fileBrowserData?.entries || []}
+          keyExtractor={(entry) => `${entry.isDirectory ? "directory" : "file"}:${entry.path}`}
+          style={styles.fileBrowserList}
+          contentContainerStyle={
+            fileBrowserData?.entries.length
+              ? styles.fileBrowserListContent
+              : styles.fileBrowserEmptyContent
+          }
+          ListHeaderComponent={
+            fileBrowserData?.truncated ? (
+              <Text style={styles.fileBrowserTruncated}>Showing the first 500 entries</Text>
+            ) : null
+          }
+          ListEmptyComponent={
+            <View style={styles.fileBrowserState}>
+              <Folder size={24} color={theme.colors.textMuted} />
+              <Text style={styles.emptyTitle}>Empty folder</Text>
+              <Text style={styles.emptyText}>There are no visible files here.</Text>
+            </View>
+          }
+          renderItem={({ item }) => {
+            const disabled = !item.isDirectory && item.previewable === false;
+            const icon = item.isDirectory ? (
+              <Folder size={18} color={theme.colors.textMuted} />
+            ) : isFileBrowserImage(item.name) ? (
+              <ImageIcon size={18} color={theme.colors.textMuted} />
+            ) : isFileBrowserMarkdown(item.name) ? (
+              <FileText size={18} color={theme.colors.textMuted} />
+            ) : (
+              <File size={18} color={theme.colors.textMuted} />
+            );
+            return (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  item.isDirectory
+                    ? `Open folder ${item.name}`
+                    : disabled
+                      ? `${item.name}, preview unavailable`
+                      : `Preview file ${item.name}`
+                }
+                disabled={disabled}
+                style={({ pressed }) => [
+                  styles.fileBrowserRow,
+                  disabled ? styles.fileBrowserRowDisabled : null,
+                  pressed ? styles.fileBrowserRowPressed : null,
+                ]}
+                onPress={() => {
+                  if (item.isDirectory) {
+                    void Haptics.selectionAsync();
+                    void loadFileBrowser(
+                      joinFileBrowserPath(fileBrowserData?.relativePath || "", item.name),
+                      fileBrowserData?.root,
+                    );
+                    return;
+                  }
+                  if (target) onOpenFile(target, item.path);
+                }}
+              >
+                <View style={styles.fileBrowserRowIcon}>{icon}</View>
+                <View style={styles.fileBrowserRowTextBlock}>
+                  <Text
+                    style={[
+                      styles.fileBrowserRowTitle,
+                      disabled ? styles.fileBrowserRowTitleDisabled : null,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {item.name}
+                  </Text>
+                  {disabled ? (
+                    <Text style={styles.fileBrowserRowMeta}>Preview unavailable</Text>
+                  ) : null}
+                </View>
+                {item.isDirectory ? (
+                  <ChevronRight size={17} color={theme.colors.textMuted} />
+                ) : null}
+              </Pressable>
+            );
+          }}
+        />
+      )}
+    </View>
+  );
+
   return (
     <SheetModal
       visible={Boolean(target)}
-      title="Terminal"
+      title={target ? agentTitle(target) : "Session"}
       onClose={closeTerminalModal}
+      onDismiss={onDismiss}
       tall
       wide
       fullscreen
-      hideHeader
     >
-      {target ? <StatusBar hidden /> : null}
-      <View style={styles.terminalFrame}>
-        <ScrollView
-          ref={paneTailScrollRef}
-          style={styles.terminalBox}
-          contentContainerStyle={styles.terminalBoxContent}
-          onContentSizeChange={() => {
-            if (terminalShouldFollow) scrollPaneTailToEnd(false);
-          }}
-          onScrollBeginDrag={() => {
-            setTerminalFollow(false);
-          }}
-          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
-          keyboardShouldPersistTaps="handled"
-        >
-          <Text accessibilityLabel="Terminal output" style={styles.terminalText}>
-            {terminalText ? terminalNodes : "No output."}
+      {fileBrowserVisible ? fileBrowserScreen : (
+        <>
+      <View style={styles.sessionScreenMetaBar}>
+        <View style={styles.sessionScreenMetaTextBlock}>
+          <Text style={styles.sessionScreenEyebrow} numberOfLines={1}>
+            {target ? `${target.machineHostname || agentMachineKey(target)} · ${target.mux || "tmux"}` : "Session"}
           </Text>
-        </ScrollView>
-        {loading ? (
-          <ActivityIndicator
-            pointerEvents="none"
-            style={styles.terminalLoadingIndicator}
-            color="#edece5"
-          />
-        ) : null}
-        <View pointerEvents="box-none" style={styles.terminalFullscreenControls}>
+          <Text style={styles.sessionScreenStatus} numberOfLines={1}>
+            {target?.waitingForInput ? "Waiting for input" : target?.status || target?.turn || "Unverified"}
+          </Text>
+        </View>
+        <View style={styles.sessionScreenActions}>
+          <Text accessibilityLabel={`Terminal text size ${Math.round(terminalTextScale * 100)} percent`} style={styles.sessionZoomLabel}>
+            {Math.round(terminalTextScale * 100)}%
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open files"
+            disabled={!activePaneId}
+            style={({ pressed }) => [
+              styles.sessionFilesButton,
+              pressed ? styles.fileBrowserRowPressed : null,
+              !activePaneId ? styles.disabledButton : null,
+            ]}
+            onPress={openFileBrowser}
+          >
+            <Folder size={17} color={theme.colors.textMuted} />
+          </Pressable>
           <Pressable
             accessibilityRole="switch"
             accessibilityLabel={terminalFollow ? "Stop following terminal output" : "Follow terminal output"}
             accessibilityState={{ checked: terminalFollow }}
-            hitSlop={6}
             style={[
-              styles.terminalFollowButton,
-              terminalFollow ? styles.terminalOverlayButtonActive : null,
+              styles.sessionFollowButton,
+              terminalFollow ? styles.sessionFollowButtonActive : null,
             ]}
             onPress={toggleTerminalFollow}
           >
-            <ArrowDown
-              size={14}
-              color={terminalFollow ? theme.colors.accent : "#b9b7ae"}
-            />
-            <Text
-              style={[
-                styles.terminalFollowButtonText,
-                terminalFollow ? styles.terminalFollowButtonTextActive : null,
-              ]}
-            >
-              {terminalFollow ? "Following" : "Follow"}
+            <ArrowDown size={15} color={terminalFollow ? theme.colors.accent : theme.colors.textMuted} />
+            <Text style={[styles.sessionFollowText, terminalFollow ? styles.sessionFollowTextActive : null]}>
+              Follow
             </Text>
           </Pressable>
-          <Pressable
-            accessibilityLabel="Close terminal"
-            hitSlop={6}
-            style={styles.terminalCloseButton}
-            onPress={closeTerminalModal}
-          >
-            <X size={17} color="#edece5" />
-          </Pressable>
         </View>
+      </View>
+      <View style={styles.terminalFrame}>
+        {loading ? (
+          <ActivityIndicator
+            pointerEvents="none"
+            style={styles.terminalLoadingIndicator}
+            color={theme.colors.accent}
+          />
+        ) : null}
+        <GestureDetector gesture={terminalPinchGesture}>
+          <ScrollView
+            ref={paneTailScrollRef}
+            style={styles.terminalBox}
+            contentContainerStyle={styles.terminalBoxContent}
+            onContentSizeChange={() => {
+              if (terminalShouldFollow) scrollPaneTailToEnd(false);
+            }}
+            onScrollBeginDrag={() => {
+              terminalUserScrollingRef.current = true;
+            }}
+            onScroll={({ nativeEvent }) => {
+              updateTerminalFollowFromScroll({
+                offsetY: nativeEvent.contentOffset.y,
+                viewportHeight: nativeEvent.layoutMeasurement.height,
+                contentHeight: nativeEvent.contentSize.height,
+              });
+            }}
+            onScrollEndDrag={({ nativeEvent }) => {
+              updateTerminalFollowFromScroll({
+                offsetY: nativeEvent.contentOffset.y,
+                viewportHeight: nativeEvent.layoutMeasurement.height,
+                contentHeight: nativeEvent.contentSize.height,
+              });
+              terminalUserScrollingRef.current = false;
+            }}
+            onMomentumScrollBegin={() => {
+              terminalUserScrollingRef.current = true;
+            }}
+            onMomentumScrollEnd={({ nativeEvent }) => {
+              updateTerminalFollowFromScroll({
+                offsetY: nativeEvent.contentOffset.y,
+                viewportHeight: nativeEvent.layoutMeasurement.height,
+                contentHeight: nativeEvent.contentSize.height,
+              });
+              terminalUserScrollingRef.current = false;
+            }}
+            scrollEventThrottle={16}
+            keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+            keyboardShouldPersistTaps="handled"
+          >
+            <Text accessibilityLabel="Terminal output" style={[styles.terminalText, terminalTextZoomStyle]}>
+              {terminalText ? terminalNodes : "No output."}
+            </Text>
+          </ScrollView>
+        </GestureDetector>
       </View>
       <PaneComposer
         variant="expanded"
@@ -5875,6 +6385,8 @@ function WindowViewModal({ target, onClose }: { target: AgentSession | null; onC
           setError("");
           terminalInputRef.current = "";
         }}
+        clearInline
+        singleShell={windowWidth < 760}
         onRetry={() => sendTerminalInput({ submit: true })}
         recognizing={terminalVoiceInput.active}
         voiceRecording={terminalVoiceInput.recording}
@@ -5886,7 +6398,6 @@ function WindowViewModal({ target, onClose }: { target: AgentSession | null; onC
         showUpload
         showShortcuts
         autoFocus={terminalAutoFocus}
-        placeholder="Type a prompt, command, or note..."
         status={status || uploadFile.error?.message || ""}
         error={error}
         retryLabel="Retry send"
@@ -5938,6 +6449,8 @@ function WindowViewModal({ target, onClose }: { target: AgentSession | null; onC
           </View>
         </Pressable>
       </SheetModal>
+        </>
+      )}
     </SheetModal>
   );
 }
@@ -5977,10 +6490,6 @@ function ResponseModal({
     },
     [onOpenFile, target],
   );
-  const markdownRules = React.useMemo(
-    () => createMarkdownPathRules(openAgentFile, { agent: target, selectable: true }),
-    [openAgentFile, target],
-  );
   const handleMarkdownLinkPress = React.useCallback(
     (url: string) => {
       const filePath = filePathFromLocalHref(url);
@@ -5993,6 +6502,14 @@ function ResponseModal({
       return false;
     },
     [api, openAgentFile],
+  );
+  const markdownRules = React.useMemo(
+    () => createMarkdownPathRules(openAgentFile, {
+      agent: target,
+      onOpenUrl: handleMarkdownLinkPress,
+      selectable: true,
+    }),
+    [handleMarkdownLinkPress, openAgentFile, target],
   );
   React.useEffect(() => {
     setPinStatus("");
@@ -7465,7 +7982,7 @@ function SheetModal({
                     <Text style={styles.sheetTitle} numberOfLines={1}>
                       {title}
                     </Text>
-                    <Pressable style={styles.iconButton} onPress={closeSheet}>
+                    <Pressable accessibilityLabel={`Close ${title}`} style={styles.iconButton} onPress={closeSheet}>
                       <X size={18} color={theme.colors.text} />
                     </Pressable>
                   </View>
@@ -7662,13 +8179,6 @@ function createStyles(
   layout: ResponsiveLayout = DEFAULT_LAYOUT,
   fontScale = 1,
 ) {
-  const columnGap = layout.isWide ? 14 : 12;
-  const listInnerWidth = Math.max(0, layout.contentMaxWidth - layout.gutter * 2);
-  const cardGridMaxWidth =
-    layout.listColumns > 1
-      ? Math.floor((listInnerWidth - columnGap * (layout.listColumns - 1)) / layout.listColumns)
-      : undefined;
-
   const definitions = StyleSheet.create({
   screen: {
     flex: 1,
@@ -7684,7 +8194,8 @@ function createStyles(
 	    maxWidth: layout.contentMaxWidth,
 	    alignSelf: "center",
 	    paddingHorizontal: layout.gutter,
-	    paddingBottom: 10,
+	    paddingTop: 2,
+	    paddingBottom: 6,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -7694,7 +8205,16 @@ function createStyles(
     minWidth: 0,
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: 9,
+  },
+  headerMark: {
+    width: 32,
+    height: 32,
+    flexShrink: 0,
+    borderRadius: theme.radii.md,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.surface,
   },
   headerLogo: {
     width: 38,
@@ -7709,11 +8229,15 @@ function createStyles(
   title: {
     ...theme.typography.title,
     color: theme.colors.text,
+    fontSize: 19,
+    lineHeight: 23,
   },
   headerMeta: {
     ...theme.typography.meta,
     color: theme.colors.textMuted,
-    marginTop: 2,
+    marginTop: 0,
+    fontSize: 11,
+    lineHeight: 14,
   },
   headerButtons: {
     flexDirection: "row",
@@ -7724,12 +8248,10 @@ function createStyles(
     flexShrink: 0,
     width: 38,
     height: 38,
-    borderRadius: theme.radii.lg,
+    borderRadius: theme.radii.full,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: theme.colors.surfaceRaised,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
+    backgroundColor: "transparent",
   },
 	  machineStripViewport: {
 	    width: "100%",
@@ -7740,29 +8262,29 @@ function createStyles(
 	    maxHeight: 50,
 	  },
 	  machineStrip: {
-	    gap: 8,
+	    gap: 4,
 	    paddingHorizontal: layout.gutter,
-	    paddingVertical: 8,
+	    paddingVertical: 6,
     alignItems: "center",
     flexGrow: 0,
   },
 	  chip: {
-	    height: 34,
+	    height: 32,
 	    maxWidth: 220,
     flexGrow: 0,
     flexShrink: 0,
     alignSelf: "center",
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     borderRadius: theme.radii.full,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface,
+    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
   },
   chipActive: {
-    backgroundColor: theme.colors.accent,
-    borderColor: theme.colors.accent,
+    backgroundColor: theme.colors.surfaceRaised,
+    borderColor: theme.colors.border,
   },
   chipText: {
     ...theme.typography.meta,
@@ -7771,7 +8293,8 @@ function createStyles(
     minWidth: 0,
   },
 	  chipTextActive: {
-	    color: theme.colors.surfaceRaised,
+	    color: theme.colors.text,
+	    fontFamily: "Lato_700Bold",
 	  },
 	  machineChipContent: {
 	    flexDirection: "row",
@@ -7803,17 +8326,6 @@ function createStyles(
 	    lineHeight: 12,
 	    color: theme.colors.surfaceRaised,
 	  },
-	  summaryRow: {
-	    width: "100%",
-	    maxWidth: layout.contentMaxWidth,
-	    alignSelf: "center",
-	    paddingHorizontal: layout.gutter,
-    paddingTop: 2,
-    paddingBottom: 8,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "flex-end",
-  },
   primaryButton: {
     width: "100%",
     minWidth: 0,
@@ -7832,10 +8344,6 @@ function createStyles(
   },
   disabledButton: {
     opacity: 0.55,
-  },
-  countText: {
-    ...theme.typography.meta,
-    color: theme.colors.textMuted,
   },
   updateBannerWrap: {
     width: "100%",
@@ -7928,15 +8436,63 @@ function createStyles(
 	    alignSelf: "center",
 	    paddingHorizontal: layout.gutter,
 	    paddingTop: 6,
-	    gap: columnGap,
+	    gap: 18,
 	  },
-	  cardColumnWrapper: {
-	    gap: columnGap,
+	  sessionGroup: {
+	    width: "100%",
+	    minWidth: 0,
+	    gap: 7,
 	  },
-	  cardGridItem: {
+	  sessionGroupHeader: {
+	    minWidth: 0,
+	    minHeight: 26,
+	    flexDirection: "row",
+	    alignItems: "center",
+	    justifyContent: "space-between",
+	    gap: 8,
+	    paddingHorizontal: 4,
+	  },
+	  sessionGroupTitleBlock: {
 	    flex: 1,
 	    minWidth: 0,
-	    maxWidth: cardGridMaxWidth,
+	    flexDirection: "row",
+	    alignItems: "baseline",
+	    gap: 8,
+	  },
+	  sessionGroupTitle: {
+	    ...theme.typography.meta,
+	    color: theme.colors.textMuted,
+	    fontFamily: "Lato_700Bold",
+	    fontSize: 11,
+	    lineHeight: 14,
+	    letterSpacing: 0.7,
+	    textTransform: "uppercase",
+	    flexShrink: 1,
+	  },
+	  sessionGroupSubtitle: {
+	    ...theme.typography.meta,
+	    color: theme.colors.textMuted,
+	    flexShrink: 1,
+	    fontSize: 11,
+	  },
+	  sessionGroupCount: {
+	    ...theme.typography.meta,
+	    color: theme.colors.textMuted,
+	    flexShrink: 0,
+	    fontSize: 11,
+	  },
+	  sessionCardGrid: {
+	    width: "100%",
+	    minWidth: 0,
+	    backgroundColor: theme.colors.surface,
+	    borderRadius: 14,
+	    borderWidth: 1,
+	    borderColor: theme.colors.border,
+	    overflow: "hidden",
+	  },
+	  cardGridItem: {
+	    width: "100%",
+	    minWidth: 0,
 	  },
   emptyList: {
     flexGrow: 1,
@@ -7959,18 +8515,111 @@ function createStyles(
 	  card: {
 	    position: "relative",
 	    minWidth: 0,
-	    borderRadius: theme.radii.xl,
-	    backgroundColor: theme.colors.surfaceRaised,
-	    borderWidth: 1,
-	    borderColor: theme.colors.border,
-	    padding: layout.cardPadding,
-	    gap: 10,
+	    backgroundColor: "transparent",
+	    borderBottomWidth: StyleSheet.hairlineWidth,
+	    borderBottomColor: theme.colors.border,
+	  },
+	  cardCollapsed: {
+	    borderRadius: theme.radii.lg,
+	    paddingHorizontal: 8,
+	    paddingVertical: 0,
+	    gap: 0,
+	  },
+	  cardMuted: {
+	    opacity: 0.62,
 	  },
 	  cardRunning: {
 	    borderColor: theme.dark ? "rgba(90, 150, 204, 0.42)" : "rgba(53, 89, 122, 0.42)",
 	  },
 	  cardSelected: {
-	    borderColor: theme.colors.accent,
+	    backgroundColor: theme.colors.surfaceRaised,
+	    borderLeftWidth: 2,
+	    borderLeftColor: theme.colors.textMuted,
+	  },
+	  sessionRowTop: {
+	    minWidth: 0,
+	    flexDirection: "row",
+	    alignItems: "stretch",
+	  },
+	  sessionRowMain: {
+	    flex: 1,
+	    minWidth: 0,
+	    minHeight: 78,
+	    paddingLeft: 12,
+	    paddingVertical: 10,
+	    flexDirection: "row",
+	    alignItems: "center",
+	    gap: 8,
+	  },
+	  sessionIndicatorColumn: {
+	    width: 12,
+	    flexShrink: 0,
+	    alignItems: "center",
+	    alignSelf: "stretch",
+	    paddingTop: 9,
+	  },
+	  sessionAgentGlyph: {
+	    width: 26,
+	    height: 26,
+	    flexShrink: 0,
+	    borderRadius: 6,
+	    alignItems: "center",
+	    justifyContent: "center",
+	    backgroundColor: theme.colors.surfaceRaised,
+	  },
+	  sessionAgentIcon: {
+	    width: 16,
+	    height: 16,
+	  },
+	  sessionPreview: {
+	    ...theme.typography.meta,
+	    color: theme.colors.textMuted,
+	    marginTop: 2,
+	  },
+	  sessionMetaRow: {
+	    minWidth: 0,
+	    flexDirection: "row",
+	    alignItems: "center",
+	    gap: 4,
+	    marginTop: 3,
+	  },
+	  sessionStatusText: {
+	    ...theme.typography.meta,
+	    color: theme.colors.text,
+	    fontSize: 10,
+	    lineHeight: 13,
+	    textTransform: "capitalize",
+	  },
+	  sessionMetaText: {
+	    ...theme.typography.meta,
+	    color: theme.colors.textMuted,
+	    flex: 1,
+	    minWidth: 0,
+	    fontSize: 10,
+	    lineHeight: 13,
+	  },
+	  sessionRowTrailing: {
+	    width: 54,
+	    flexShrink: 0,
+	    alignSelf: "stretch",
+	    alignItems: "flex-end",
+	    justifyContent: "space-between",
+	    paddingVertical: 3,
+	    flexDirection: "row",
+	  },
+	  sessionRowControls: {
+	    width: 42,
+	    flexShrink: 0,
+	    alignItems: "center",
+	    justifyContent: "center",
+	    paddingVertical: 4,
+	  },
+	  sessionRowIconButton: {
+	    width: 38,
+	    height: 34,
+	    borderRadius: theme.radii.md,
+	    alignItems: "center",
+	    justifyContent: "center",
 	  },
 	  runningEdge: {
 	    ...StyleSheet.absoluteFill,
@@ -8009,11 +8658,18 @@ function createStyles(
     backgroundColor: theme.dark ? "#3a2f16" : "#fff7e0",
     borderColor: theme.colors.warning,
   },
+	starButtonCollapsed: {
+	  left: 8,
+	  top: 4,
+	},
   cardSummary: {
     minWidth: 0,
     minHeight: 44,
     justifyContent: "center",
   },
+	cardSummaryCollapsed: {
+	  minHeight: 46,
+	},
   cardSummaryPressed: {
     opacity: 0.68,
   },
@@ -8025,6 +8681,12 @@ function createStyles(
     paddingLeft: 48,
     paddingRight: 2,
   },
+	cardHeaderCollapsed: {
+	  minHeight: 46,
+	  gap: 8,
+	  paddingLeft: 46,
+	  paddingRight: 0,
+	},
   agentAvatar: {
     width: 38,
     height: 38,
@@ -8035,10 +8697,19 @@ function createStyles(
     alignItems: "center",
     justifyContent: "center",
   },
+	agentAvatarCollapsed: {
+	  width: 30,
+	  height: 30,
+	  borderRadius: theme.radii.md,
+	},
   agentIcon: {
     width: 22,
     height: 22,
   },
+	agentIconCollapsed: {
+	  width: 18,
+	  height: 18,
+	},
   cardTitleBlock: {
     flex: 1,
     minWidth: 0,
@@ -8085,12 +8756,24 @@ function createStyles(
     lineHeight: 12,
     marginTop: 1,
   },
+	collapsedMetaRow: {
+	  minWidth: 0,
+	  flexDirection: "row",
+	  alignItems: "center",
+	  gap: 4,
+	  marginTop: 1,
+	},
+	collapsedMetaText: {
+	  ...theme.typography.meta,
+	  color: theme.colors.textMuted,
+	  flexShrink: 1,
+	},
   cardActivityTime: {
     ...theme.typography.meta,
     color: theme.colors.textMuted,
     flexShrink: 0,
-    fontSize: 13,
-    lineHeight: 17,
+    fontSize: 10,
+    lineHeight: 13,
     fontVariant: ["tabular-nums"],
   },
   cardActivityTimeRecent: {
@@ -8099,6 +8782,12 @@ function createStyles(
   },
   cardBody: {
     gap: 10,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 14,
+    backgroundColor: theme.colors.surfaceRaised,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.border,
   },
   statusRow: {
     flexDirection: "row",
@@ -8160,11 +8849,7 @@ function createStyles(
     color: theme.colors.text,
   },
   responseBlock: {
-    borderRadius: theme.radii.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface,
-    padding: 10,
+    paddingTop: 2,
     gap: 8,
   },
 	  answerText: {
@@ -8188,16 +8873,14 @@ function createStyles(
   actionButton: {
     width: 38,
     height: 38,
-    borderRadius: theme.radii.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
+    borderRadius: theme.radii.md,
     backgroundColor: theme.colors.surface,
     alignItems: "center",
     justifyContent: "center",
   },
   actionButtonLabeled: {
     width: "auto",
-    minWidth: 72,
+    minWidth: 84,
     paddingHorizontal: 10,
     flexDirection: "row",
     gap: 6,
@@ -8211,6 +8894,25 @@ function createStyles(
     borderColor: theme.colors.accent,
     backgroundColor: theme.dark ? "#162c3a" : "#e6f3ff",
   },
+	  newSessionFab: {
+	    position: "absolute",
+	    right: Math.max(layout.gutter, (layout.width - layout.contentMaxWidth) / 2 + layout.gutter),
+	    width: 52,
+	    height: 52,
+	    borderRadius: 26,
+	    alignItems: "center",
+	    justifyContent: "center",
+	    backgroundColor: theme.dark ? "#f5f5f5" : "#202020",
+	    shadowColor: "#000000",
+	    shadowOpacity: 0.24,
+	    shadowRadius: 14,
+	    shadowOffset: { width: 0, height: 7 },
+	    elevation: 8,
+	  },
+	  newSessionFabPressed: {
+	    opacity: 0.72,
+	    transform: [{ scale: 0.96 }],
+	  },
   menuLayer: {
     flex: 1,
     alignItems: "flex-end",
@@ -8898,7 +9600,13 @@ function createStyles(
   paneComposer: {
     width: "100%",
     minWidth: 0,
-    gap: 10,
+    gap: 8,
+    paddingTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.border,
+  },
+  paneComposerSingleShell: {
+    gap: 6,
   },
   visionPaneComposer: {
     width: "100%",
@@ -9080,16 +9788,22 @@ function createStyles(
     width: "100%",
     minWidth: 0,
     minHeight: 150,
-    borderRadius: theme.radii.lg,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: theme.colors.border,
     backgroundColor: theme.colors.surfaceRaised,
     overflow: "hidden",
   },
+  paneComposerInputShellSingle: {
+    minHeight: 108,
+  },
+  paneComposerInputShellSingleCollapsed: {
+    minHeight: 56,
+  },
   paneComposerInput: {
     flex: 1,
     minWidth: 0,
-    borderRadius: theme.radii.lg,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: theme.colors.border,
     backgroundColor: theme.colors.surfaceRaised,
@@ -9112,12 +9826,21 @@ function createStyles(
     paddingVertical: 10,
     textAlignVertical: "top",
   },
+  paneComposerInputSingleShell: {
+    minHeight: 108,
+    paddingTop: 40,
+    paddingBottom: 50,
+  },
+  paneComposerInputSingleShellCollapsed: {
+    minHeight: 56,
+    paddingTop: 10,
+    paddingRight: 256,
+    paddingBottom: 10,
+  },
   paneComposerIconButton: {
     width: 44,
     height: 44,
-    borderRadius: theme.radii.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
+    borderRadius: theme.radii.full,
     backgroundColor: theme.colors.surfaceRaised,
     alignItems: "center",
     justifyContent: "center",
@@ -9129,9 +9852,7 @@ function createStyles(
   paneComposerToolButton: {
     minHeight: 44,
     paddingHorizontal: 12,
-    borderRadius: theme.radii.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
+    borderRadius: theme.radii.md,
     backgroundColor: theme.colors.surfaceRaised,
     flexDirection: "row",
     alignItems: "center",
@@ -9150,36 +9871,26 @@ function createStyles(
     alignItems: "center",
     gap: 7,
   },
-  paneComposerInlineButton: {
-    width: 44,
-    height: 44,
-    borderRadius: theme.radii.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface,
-    alignItems: "center",
-    justifyContent: "center",
+  paneComposerInlineActionsSingle: {
+    right: 6,
+    bottom: 6,
+    gap: 6,
   },
-  paneComposerFollowButton: {
-    minWidth: 76,
-    minHeight: 44,
-    paddingHorizontal: 9,
-    alignSelf: "flex-start",
-    borderRadius: theme.radii.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 5,
-  },
-  paneComposerFollowButtonText: {
+  paneComposerEmbeddedStatus: {
+    position: "absolute",
+    left: 8,
+    right: 256,
+    bottom: 20,
     ...theme.typography.meta,
     color: theme.colors.textMuted,
   },
-  paneComposerFollowButtonTextActive: {
-    color: theme.colors.accent,
+  paneComposerInlineButton: {
+    width: 44,
+    height: 44,
+    borderRadius: theme.radii.full,
+    backgroundColor: theme.colors.surface,
+    alignItems: "center",
+    justifyContent: "center",
   },
   paneComposerInlineButtonActive: {
     borderColor: theme.colors.accent,
@@ -9201,7 +9912,7 @@ function createStyles(
   paneComposerSendButton: {
     width: 44,
     height: 44,
-    borderRadius: theme.radii.lg,
+    borderRadius: theme.radii.full,
     backgroundColor: theme.colors.accent,
     alignItems: "center",
     justifyContent: "center",
@@ -9209,7 +9920,7 @@ function createStyles(
   paneComposerInlineSendButton: {
     width: 44,
     height: 44,
-    borderRadius: theme.radii.lg,
+    borderRadius: theme.radii.full,
     backgroundColor: theme.colors.accent,
     alignItems: "center",
     justifyContent: "center",
@@ -9244,6 +9955,16 @@ function createStyles(
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+  },
+  snippetBarEmbedded: {
+    position: "absolute",
+    width: "auto",
+    top: 5,
+    right: 6,
+    left: 6,
+    zIndex: 1,
+    minHeight: 34,
+    gap: 6,
   },
   snippetScroll: {
     flex: 1,
@@ -9530,12 +10251,18 @@ function createStyles(
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
+    minHeight: 44,
+    paddingBottom: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.border,
   },
   sheetTitle: {
     flex: 1,
     minWidth: 0,
     ...theme.typography.section,
     color: theme.colors.text,
+    fontSize: 17,
+    lineHeight: 22,
   },
   sheetMeta: {
     width: "100%",
@@ -9548,7 +10275,7 @@ function createStyles(
     width: "100%",
     minWidth: 0,
     flexShrink: 1,
-    marginTop: 12,
+    marginTop: 10,
   },
   sheetBodyHeaderless: {
     marginTop: 0,
@@ -9666,58 +10393,84 @@ function createStyles(
     color: theme.colors.danger,
     textAlign: "center",
   },
-  terminalFullscreenControls: {
-    position: "absolute",
-    top: 8,
-    right: 8,
-    zIndex: 2,
+  sessionScreenMetaBar: {
+    width: "100%",
+    minWidth: 0,
+    minHeight: 42,
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    gap: 12,
   },
-  terminalFollowButton: {
-    minWidth: 68,
-    height: 32,
-    paddingHorizontal: 8,
-    borderRadius: theme.radii.md,
-    borderWidth: 1,
-    borderColor: "rgba(237, 236, 229, 0.18)",
-    backgroundColor: "rgba(20, 20, 19, 0.92)",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 4,
+  sessionScreenMetaTextBlock: {
+    flex: 1,
+    minWidth: 0,
   },
-  terminalFollowButtonText: {
+  sessionScreenEyebrow: {
     ...theme.typography.meta,
-    color: "#b9b7ae",
+    color: theme.colors.textMuted,
+    fontSize: 11,
+    lineHeight: 14,
   },
-  terminalFollowButtonTextActive: {
-    color: theme.colors.accent,
+  sessionScreenStatus: {
+    ...theme.typography.meta,
+    color: theme.colors.text,
+    marginTop: 1,
+    textTransform: "capitalize",
   },
-  terminalOverlayButtonActive: {
-    borderColor: theme.colors.accent,
-    backgroundColor: theme.dark ? "rgba(22, 44, 58, 0.96)" : "rgba(230, 243, 255, 0.96)",
+  sessionScreenActions: {
+    flexShrink: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
-  terminalCloseButton: {
-    width: 32,
-    height: 32,
+  sessionZoomLabel: {
+    ...theme.typography.meta,
+    color: theme.colors.textMuted,
+    minWidth: 34,
+    textAlign: "right",
+    fontVariant: ["tabular-nums"],
+  },
+  sessionFilesButton: {
+    width: 44,
+    height: 44,
+    flexShrink: 0,
     borderRadius: theme.radii.md,
-    borderWidth: 1,
-    borderColor: "rgba(237, 236, 229, 0.18)",
-    backgroundColor: "rgba(20, 20, 19, 0.92)",
+    backgroundColor: theme.colors.surfaceRaised,
     alignItems: "center",
     justifyContent: "center",
+  },
+  sessionFollowButton: {
+    minWidth: 74,
+    height: 32,
+    flexShrink: 0,
+    paddingHorizontal: 10,
+    borderRadius: theme.radii.md,
+    backgroundColor: theme.colors.surfaceRaised,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+  },
+  sessionFollowButtonActive: {
+    backgroundColor: theme.dark ? "#172233" : "#e8f0ff",
+  },
+  sessionFollowText: {
+    ...theme.typography.meta,
+    color: theme.colors.textMuted,
+    fontSize: 11,
+  },
+  sessionFollowTextActive: {
+    color: theme.colors.accent,
   },
   terminalFrame: {
     position: "relative",
     flex: 1,
     minHeight: 0,
     minWidth: 0,
-    borderRadius: theme.radii.lg,
+    borderRadius: theme.radii.md,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    backgroundColor: theme.dark ? "#0d0d0c" : "#272721",
+    backgroundColor: theme.dark ? "#1e1e1e" : theme.colors.surfaceRaised,
     overflow: "hidden",
   },
   terminalLoadingIndicator: {
@@ -9741,12 +10494,125 @@ function createStyles(
   },
   terminalBoxContent: {
     padding: 12,
-    paddingTop: 48,
+    paddingTop: 12,
   },
   terminalText: {
     minWidth: 0,
     ...theme.typography.mono,
-    color: "#edece5",
+    color: theme.colors.text,
+  },
+  fileBrowserScreen: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+  },
+  fileBrowserHeader: {
+    minHeight: 58,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingBottom: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.border,
+  },
+  fileBrowserIconButton: {
+    width: 44,
+    height: 44,
+    flexShrink: 0,
+    borderRadius: theme.radii.md,
+    backgroundColor: theme.colors.surfaceRaised,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fileBrowserTitleBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  fileBrowserTitle: {
+    ...theme.typography.section,
+    color: theme.colors.text,
+  },
+  fileBrowserPath: {
+    ...theme.typography.mono,
+    color: theme.colors.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
+    marginTop: 2,
+  },
+  fileBrowserList: {
+    flex: 1,
+    minHeight: 0,
+  },
+  fileBrowserListContent: {
+    paddingVertical: 4,
+  },
+  fileBrowserEmptyContent: {
+    flexGrow: 1,
+  },
+  fileBrowserRow: {
+    minHeight: 54,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.border,
+  },
+  fileBrowserRowPressed: {
+    opacity: 0.62,
+  },
+  fileBrowserRowDisabled: {
+    opacity: 0.5,
+  },
+  fileBrowserRowIcon: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fileBrowserRowTextBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  fileBrowserRowTitle: {
+    ...theme.typography.body,
+    color: theme.colors.text,
+  },
+  fileBrowserRowTitleDisabled: {
+    color: theme.colors.textMuted,
+  },
+  fileBrowserRowMeta: {
+    ...theme.typography.meta,
+    color: theme.colors.textMuted,
+    marginTop: 1,
+  },
+  fileBrowserState: {
+    flex: 1,
+    minHeight: 180,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 9,
+    padding: 20,
+  },
+  fileBrowserRetryButton: {
+    minWidth: 88,
+    minHeight: 44,
+    borderRadius: theme.radii.md,
+    backgroundColor: theme.colors.surfaceRaised,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+  },
+  fileBrowserRetryText: {
+    ...theme.typography.meta,
+    color: theme.colors.text,
+  },
+  fileBrowserTruncated: {
+    ...theme.typography.meta,
+    color: theme.colors.textMuted,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
   transcriptBox: {
     flex: 1,

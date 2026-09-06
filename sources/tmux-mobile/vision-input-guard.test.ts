@@ -134,21 +134,20 @@ describe("Terminal fullscreen behavior", () => {
     expect(appSource).not.toContain("setTerminalFullscreen");
     expect(appSource).not.toContain('label="Fullscreen terminal"');
     expect(appSource).not.toContain('label="Exit fullscreen terminal"');
-    expect(appSource).toContain("fullscreen\n      hideHeader");
+    expect(appSource).toMatch(/fullscreen\s*>/);
+    expect(appSource).not.toContain("fullscreen\n      hideHeader");
   });
 
-  it("overlays only follow and close inside the terminal frame", () => {
+  it("keeps a stable session header and follow control above the terminal", () => {
     expect(appSource).toContain("<View style={styles.terminalFrame}>");
-    expect(appSource).toContain(
-      '<View pointerEvents="box-none" style={styles.terminalFullscreenControls}>',
-    );
+    expect(appSource).toContain("style={styles.sessionScreenMetaBar}");
     expect(appSource).toContain("contentContainerStyle={styles.terminalBoxContent}");
     expect(appSource).toContain('accessibilityLabel={terminalFollow ? "Stop following terminal output" : "Follow terminal output"}');
-    expect(appSource).toContain('accessibilityLabel="Close terminal"');
+    expect(appSource).toContain('title={target ? agentTitle(target) : "Session"}');
+    expect(appSource).toContain("accessibilityLabel={`Close ${title}`}");
+    expect(appSource).not.toContain("styles.terminalFullscreenControls");
+    expect(appSource).not.toContain("styles.terminalOverlayButton");
     expect(appSource).toContain("onClose={closeTerminalModal}");
-    expect(appSource).toMatch(
-      /terminalFullscreenControls:\s*\{\s*position: "absolute",\s*top: 8,\s*right: 8,/,
-    );
     expect(appSource).not.toContain("onCloseTerminal");
     expect(appSource).not.toContain("onToggleFollow");
   });
