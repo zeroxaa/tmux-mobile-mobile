@@ -4,6 +4,7 @@ import { agentMachineKey } from "@/tmux-mobile/types";
 export type SessionCardSummary = {
   windowName: string;
   sessionName: string;
+  agentSessionTitle: string;
   directory: string;
   machineName: string;
   lastActivityAt: string | null;
@@ -14,6 +15,21 @@ export function sessionModelLabel(agent: AgentSession): string {
     .map(cleanLabel)
     .filter(Boolean)
     .join(" · ");
+}
+
+export function agentSessionDisplayLabel(agent: AgentSession): string {
+  const kind = cleanLabel(agent.kind).toLocaleLowerCase();
+  const kindLabel =
+    kind === "codex"
+      ? "Codex"
+      : kind === "claude"
+        ? "Claude"
+        : kind
+          ? `${kind.slice(0, 1).toLocaleUpperCase()}${kind.slice(1)}`
+          : "";
+  const title = cleanLabel(agent.agentSessionTitle);
+  if (kindLabel && title) return `${kindLabel} · ${title}`;
+  return title || kindLabel;
 }
 
 function cleanLabel(value: string | null | undefined): string {
@@ -40,6 +56,7 @@ export function sessionCardSummary(agent: AgentSession): SessionCardSummary {
   return {
     windowName: cleanLabel(agent.windowName) || sessionName || "(unnamed)",
     sessionName,
+    agentSessionTitle: cleanLabel(agent.agentSessionTitle),
     directory: cleanLabel(agent.cwd),
     machineName:
       cleanLabel(agent.machineHostname) || cleanLabel(agentMachineKey(agent)),

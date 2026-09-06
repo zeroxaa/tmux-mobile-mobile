@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  agentSessionDisplayLabel,
   sessionCardSummary,
   sessionModelLabel,
 } from "@/tmux-mobile/session-card";
@@ -12,12 +13,14 @@ describe("sessionCardSummary", () => {
         machineHostname: "studio",
         windowName: "Implement card view",
         sessionName: "codex-main",
+        agentSessionTitle: "Simplify session cards",
         cwd: "/Users/me/src/tmux-mobile",
         lastActivityAt: "2026-07-25T18:00:00.000Z",
       }),
     ).toEqual({
       windowName: "Implement card view",
       sessionName: "codex-main",
+      agentSessionTitle: "Simplify session cards",
       directory: "/Users/me/src/tmux-mobile",
       machineName: "studio",
       lastActivityAt: "2026-07-25T18:00:00.000Z",
@@ -36,10 +39,26 @@ describe("sessionCardSummary", () => {
     ).toEqual({
       windowName: "session-id",
       sessionName: "session-id",
+      agentSessionTitle: "",
       directory: "",
       machineName: "fallback-machine",
       lastActivityAt: "2026-07-25T17:03:00.000Z",
     });
+  });
+});
+
+describe("agentSessionDisplayLabel", () => {
+  it("combines the Agent kind and native session name on one line", () => {
+    expect(
+      agentSessionDisplayLabel({
+        kind: "codex",
+        agentSessionTitle: "Simplify session cards",
+      }),
+    ).toBe("Codex · Simplify session cards");
+  });
+
+  it("keeps the Agent kind when older connectors have no native name", () => {
+    expect(agentSessionDisplayLabel({ kind: "claude" })).toBe("Claude");
   });
 });
 

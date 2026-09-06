@@ -84,6 +84,8 @@ export interface AgentSession {
   activeCommand?: string;
   kind?: AgentKind;
   agentSessionId?: string;
+  agentSessionTitle?: string;
+  agentSessionTitleSource?: string;
   transcriptPath?: string;
   lastUserText?: string;
   lastUserAt?: string | null;

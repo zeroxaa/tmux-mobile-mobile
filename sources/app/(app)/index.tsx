@@ -163,6 +163,7 @@ import {
 import { LegacyIPadShortcutCapture } from "@/tmux-mobile/legacy-ipad-shortcut-capture";
 import { isRecentActivity, relativeTimeLabel } from "@/tmux-mobile/relative-time";
 import {
+  agentSessionDisplayLabel,
   sessionCardSummary,
   sessionModelLabel,
 } from "@/tmux-mobile/session-card";
@@ -173,6 +174,10 @@ import {
   type AgentSessionGroup,
 } from "@/tmux-mobile/session-groups";
 import { nextTerminalFollowState } from "@/tmux-mobile/terminal-follow";
+import {
+  sessionCardFoldState,
+  shouldFoldSessionCards,
+} from "@/tmux-mobile/card-folding";
 import {
   fileBrowserLocationLabel,
   isFileBrowserImage,
@@ -218,11 +223,6 @@ import type {
   WindowViewResponse,
 } from "@/tmux-mobile/types";
 
-const AGENT_ICONS: Record<string, number> = {
-  claude: require("@/assets/images/icon-claude.png"),
-  codex: require("@/assets/images/icon-gpt.png"),
-  gemini: require("@/assets/images/icon-gemini.png"),
-};
 const APP_LOGO = require("../../../logo.png");
 
 const EMPTY_MACHINES: Machine[] = [];
@@ -245,6 +245,12 @@ const NATIVE_VISION_CONTROLS_STATUS: boolean | null =
       ? true
       : CJMUXVisionDevice.isIOSAppOnVision;
 const NATIVE_VISION_CONTROLS_DETECTED = NATIVE_VISION_CONTROLS_STATUS === true;
+const FOLD_SESSION_CARDS = shouldFoldSessionCards({
+  os: Platform.OS,
+  isPad: Platform.OS === "ios" && Platform.isPad,
+  isVision: Platform.OS === "ios" && Platform.isVision,
+  visionDeviceDetected: NATIVE_VISION_CONTROLS_DETECTED,
+});
 type ThemeMode = "light" | "dark";
 type MachineChipStats = {
   workingCount: number;
@@ -1540,7 +1546,7 @@ function CommandCenterScreen() {
           <View style={styles.headerTitleBlock}>
             <Text style={styles.title}>Sessions</Text>
             <Text style={styles.headerMeta} numberOfLines={1}>
-              {groupedAgents.sessionCount} tmux · {agents.length} windows
+              {groupedAgents.sessionCount} sessions · {agents.length} windows
             </Text>
           </View>
         </View>
@@ -1629,9 +1635,6 @@ function CommandCenterScreen() {
                 <Text style={styles.sessionGroupTitle} numberOfLines={1}>
                   {group.title}
                 </Text>
-                <Text style={styles.sessionGroupSubtitle} numberOfLines={1}>
-                  {group.subtitle}
-                </Text>
               </View>
               <Text style={styles.sessionGroupCount}>
                 {group.agents.length} window{group.agents.length === 1 ? "" : "s"}
@@ -1641,10 +1644,21 @@ function CommandCenterScreen() {
               {group.agents.map((item) => {
                 const key = agentCardKey(item);
                 const starred = isAgentStarred(item, stars);
+                const recentActivity = isRecentActivity(
+                  sessionCardSummary(item).lastActivityAt,
+                  relativeTimeNow,
+                );
+                const foldState = sessionCardFoldState({
+                  foldSessionCards: FOLD_SESSION_CARDS,
+                  recentActivity,
+                  manuallyExpanded: expandedAgentKey === key,
+                });
                 const selectAgent = () => setSelectedAgent(item);
                 const toggleExpanded = () => {
                   selectAgent();
-                  setExpandedAgentKey((current) => nextExpandedAgentKey(current, key));
+                  if (foldState.collapsible) {
+                    setExpandedAgentKey((current) => nextExpandedAgentKey(current, key));
+                  }
                 };
                 return (
                   <View key={key} style={styles.cardGridItem}>
@@ -1653,9 +1667,8 @@ function CommandCenterScreen() {
                       nowMs={relativeTimeNow}
                       starred={starred}
                       selected={selectedAgent ? agentCardKey(selectedAgent) === key : false}
-                      collapsible
-                      expanded={expandedAgentKey === key}
-                      showSessionName={group.kind === "starred"}
+                      collapsible={foldState.collapsible}
+                      expanded={foldState.expanded}
                       onToggleStar={() => toggleStar(item)}
                       onToggleExpanded={toggleExpanded}
                       onSend={() => {
@@ -2312,7 +2325,6 @@ function AgentCard({
   selected,
   collapsible,
   expanded,
-  showSessionName,
   onToggleStar,
   onToggleExpanded,
   onSend,
@@ -2332,7 +2344,6 @@ function AgentCard({
   selected: boolean;
   collapsible: boolean;
   expanded: boolean;
-  showSessionName: boolean;
   onToggleStar: () => void;
   onToggleExpanded: () => void;
   onSend: () => void;
@@ -2348,15 +2359,10 @@ function AgentCard({
 }) {
   const theme = useAppTheme();
   const styles = useAppStyles();
-  const icon = AGENT_ICONS[String(agent.kind || "").toLowerCase()];
   const status = agent.waitingForInput ? "waiting" : agent.status || agent.turn || "unverified";
   const running = status === "running";
   const summary = sessionCardSummary(agent);
-  const displayWindowIndex = agent.windowIndex ?? agent.index;
-  const displayWindowName =
-    displayWindowIndex === undefined || displayWindowIndex === null
-      ? summary.windowName
-      : `${displayWindowIndex}:${summary.windowName}`;
+  const agentSessionLabel = agentSessionDisplayLabel(agent);
   const modelLabel = sessionModelLabel(agent);
   const activityLabel = relativeTimeLabel(summary.lastActivityAt, nowMs) || "No activity";
   const recentActivity = isRecentActivity(summary.lastActivityAt, nowMs);
@@ -2381,9 +2387,9 @@ function AgentCard({
       <View style={styles.sessionRowTop}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Open window ${summary.windowName}. Session ${
-            summary.sessionName || "unnamed"
-          }. Machine ${summary.machineName || "unknown"}. Agent ${agent.kind || "unknown"}. ${
+          accessibilityLabel={`Open window ${summary.windowName}. ${
+            agentSessionLabel ? `Agent session ${agentSessionLabel}. ` : ""
+          }Directory ${summary.directory || "unknown"}. ${
             modelLabel ? `Model and reasoning effort ${modelLabel}. ` : ""
           }Status ${status}. Last activity ${activityLabel}.`}
           accessibilityHint="Open the session terminal"
@@ -2397,51 +2403,34 @@ function AgentCard({
           <View style={styles.sessionIndicatorColumn}>
             <View style={[styles.statusDot, statusStyle]} />
           </View>
-          <View style={styles.sessionAgentGlyph}>
-            {icon ? (
-              <Image source={icon} style={styles.sessionAgentIcon} resizeMode="contain" />
-            ) : (
-              <Terminal size={15} color={theme.colors.textMuted} />
-            )}
-          </View>
           <View style={styles.cardTitleBlock}>
             <View style={styles.cardTitleRow}>
-              <Text style={styles.cardTitle} numberOfLines={1}>
-                {displayWindowName}
+              <Text style={styles.cardWindowTitle} numberOfLines={1}>
+                {summary.windowName}
               </Text>
-              {showSessionName && agent.sessionName ? (
-                <Text style={styles.sessionPill} numberOfLines={1}>
-                  {agent.sessionName}
+              {agentSessionLabel ? (
+                <Text style={styles.cardAgentSessionTitle} numberOfLines={1}>
+                  {agentSessionLabel}
                 </Text>
               ) : null}
             </View>
-            <Text style={styles.sessionPreview} numberOfLines={1}>
-              {agent.lastAssistantText || agent.lastUserText || agentSubtitle(agent) || "No transcript yet."}
-            </Text>
-            <View style={styles.sessionMetaRow}>
-              <Text style={styles.sessionStatusText} numberOfLines={1}>
-                {status}
+            <View style={styles.sessionContextRow}>
+              <Text style={styles.sessionDirectory} numberOfLines={1}>
+                {summary.directory || "No directory"}
               </Text>
-              <Text style={styles.statusDivider}>·</Text>
-              <Text style={styles.sessionMetaText} numberOfLines={1}>
-                {agent.kind || "agent"}{modelLabel ? ` · ${modelLabel}` : ""}
+              <Text
+                style={[
+                  styles.cardActivityTime,
+                  recentActivity ? styles.cardActivityTimeRecent : null,
+                ]}
+                accessibilityLabel={`${
+                  recentActivity ? "Recent activity" : "Last activity"
+                }, ${exactTimeLabel(summary.lastActivityAt) || activityLabel}`}
+                numberOfLines={1}
+              >
+                {activityLabel}
               </Text>
             </View>
-          </View>
-          <View style={styles.sessionRowTrailing}>
-            <Text
-              style={[
-                styles.cardActivityTime,
-                recentActivity ? styles.cardActivityTimeRecent : null,
-              ]}
-              accessibilityLabel={`${
-                recentActivity ? "Recent activity" : "Last activity"
-              }, ${exactTimeLabel(summary.lastActivityAt) || activityLabel}`}
-              numberOfLines={1}
-            >
-              {activityLabel}
-            </Text>
-            <ChevronRight size={15} color={theme.colors.textMuted} />
           </View>
         </Pressable>
         <View style={styles.sessionRowControls}>
@@ -2475,21 +2464,6 @@ function AgentCard({
       </View>
       {expanded ? (
         <View style={styles.cardBody}>
-          <View style={styles.statusRow}>
-            <Text style={styles.statusText}>{agent.machineHostname || agentMachineKey(agent)}</Text>
-            <Text style={styles.statusDivider}>·</Text>
-            <Text style={styles.statusText}>{agent.mux || "tmux"}</Text>
-            <Text style={styles.statusDivider}>·</Text>
-            <Text style={styles.statusText}>{agent.turnCount || 0} turns</Text>
-            {agent.cwd ? (
-              <>
-                <Text style={styles.statusDivider}>·</Text>
-                <Text style={styles.cwdText} numberOfLines={1}>
-                  {agent.cwd}
-                </Text>
-              </>
-            ) : null}
-          </View>
           {agent.lastUserText ? (
             <View>
               <CardSectionHeader label="Last prompt" timestamp={agent.lastUserAt} nowMs={nowMs} />
@@ -8556,7 +8530,7 @@ function createStyles(
 	    flexShrink: 0,
 	    alignItems: "center",
 	    alignSelf: "stretch",
-	    paddingTop: 9,
+	    paddingTop: 8,
 	  },
 	  sessionAgentGlyph: {
 	    width: 26,
@@ -8717,15 +8691,36 @@ function createStyles(
   },
   cardTitleRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "baseline",
     gap: 8,
   },
-  cardTitle: {
+  cardWindowTitle: {
     ...theme.typography.section,
     color: theme.colors.text,
+    flexShrink: 1,
+    flexBasis: "34%",
+    maxWidth: "34%",
+    minWidth: 54,
+  },
+  cardAgentSessionTitle: {
+    ...theme.typography.section,
+    color: theme.colors.textMuted,
     flex: 1,
     minWidth: 0,
   },
+	  sessionContextRow: {
+	    minWidth: 0,
+	    flexDirection: "row",
+	    alignItems: "baseline",
+	    gap: 8,
+	    marginTop: 4,
+	  },
+	  sessionDirectory: {
+	    ...theme.typography.meta,
+	    color: theme.colors.textMuted,
+	    flex: 1,
+	    minWidth: 0,
+	  },
 	  sessionPill: {
 	    ...theme.typography.meta,
 	    color: theme.colors.textMuted,
