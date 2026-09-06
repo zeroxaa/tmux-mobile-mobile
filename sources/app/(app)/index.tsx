@@ -2481,7 +2481,11 @@ function AgentCard({
                 numberOfLines={3}
                 onOpenPath={onOpenFile}
               />
-              <View style={styles.responseActions}>
+            </View>
+          ) : null}
+          <View style={styles.cardActions}>
+            {agent.lastAssistantText ? (
+              <>
                 <ActionButton
                   icon={<Maximize2 size={15} color={theme.colors.text} />}
                   label="Open response"
@@ -2492,13 +2496,11 @@ function AgentCard({
                   label="Copy response"
                   onPress={onCopyResponse}
                 />
-              </View>
-            </View>
-          ) : null}
-          <View style={styles.cardActions}>
-            <ActionButton icon={<Eye size={15} color={theme.colors.text} />} label="Terminal" showLabel onPress={onView} />
-            <ActionButton icon={<Send size={15} color={theme.colors.text} />} label="Send" showLabel onPress={onSend} />
-            <ActionButton icon={<MessageSquareText size={15} color={theme.colors.text} />} label="Transcript" showLabel onPress={onTranscript} />
+              </>
+            ) : null}
+            <ActionButton icon={<Eye size={15} color={theme.colors.text} />} label="Terminal" onPress={onView} />
+            <ActionButton icon={<Send size={15} color={theme.colors.text} />} label="Send" onPress={onSend} />
+            <ActionButton icon={<MessageSquareText size={15} color={theme.colors.text} />} label="Transcript" onPress={onTranscript} />
             {onSsh ? (
               <ActionButton icon={<Laptop size={15} color={theme.colors.text} />} label="SSH" onPress={onSsh} />
             ) : null}
@@ -2544,7 +2546,6 @@ function ActionButton({
   onPress,
   disabled,
   active,
-  showLabel,
   stopPropagation,
 }: {
   icon: React.ReactNode;
@@ -2552,7 +2553,6 @@ function ActionButton({
   onPress: () => void;
   disabled?: boolean;
   active?: boolean;
-  showLabel?: boolean;
   stopPropagation?: boolean;
 }) {
   const styles = useAppStyles();
@@ -2560,10 +2560,9 @@ function ActionButton({
     <Pressable
       accessibilityLabel={label}
       disabled={disabled}
-      hitSlop={3}
+      hitSlop={5}
       style={[
         styles.actionButton,
-        showLabel ? styles.actionButtonLabeled : null,
         active ? styles.actionButtonActive : null,
         disabled ? styles.disabledButton : null,
       ]}
@@ -2573,7 +2572,6 @@ function ActionButton({
       }}
     >
       {icon}
-      {showLabel ? <Text style={styles.actionButtonLabel}>{label}</Text> : null}
     </Pressable>
   );
 }
@@ -8855,35 +8853,19 @@ function createStyles(
 	    color: theme.colors.accent,
 	    textDecorationLine: "underline",
 	  },
-	  responseActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: 8,
-  },
   cardActions: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
+    flexWrap: "nowrap",
+    justifyContent: "space-between",
+    gap: 2,
   },
   actionButton: {
-    width: 38,
-    height: 38,
+    width: 34,
+    height: 34,
     borderRadius: theme.radii.md,
     backgroundColor: theme.colors.surface,
     alignItems: "center",
     justifyContent: "center",
-  },
-  actionButtonLabeled: {
-    width: "auto",
-    minWidth: 84,
-    paddingHorizontal: 10,
-    flexDirection: "row",
-    gap: 6,
-  },
-  actionButtonLabel: {
-    ...theme.typography.meta,
-    color: theme.colors.text,
-    fontFamily: "Lato_700Bold",
   },
   actionButtonActive: {
     borderColor: theme.colors.accent,
