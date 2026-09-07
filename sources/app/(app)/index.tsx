@@ -77,10 +77,13 @@ import {
   Info,
   KeyRound,
   Link2,
+  List,
   ListPlus,
   Laptop,
   LogOut,
+  Maximize,
   Maximize2,
+  MessageSquareText,
   Mic,
   MicOff,
   Minimize2,
@@ -92,9 +95,8 @@ import {
   PencilLine,
   Plus,
   RefreshCcw,
-  ScrollText,
   Send,
-  SendHorizontal,
+  Square,
   Star,
   Settings2,
   Smartphone,
@@ -103,6 +105,7 @@ import {
   Trash2,
   Type,
   Upload,
+  Volume2,
   X,
 } from "lucide-react-native";
 import { useQueryClient } from "@tanstack/react-query";
@@ -788,6 +791,7 @@ function CommandCenterScreen() {
   const cardStars = useCardStars();
   const toggleCardStar = useToggleCardStar();
   const deleteWindow = useDeleteWindow();
+  const pinCardResponse = usePinInlineArtifact();
   const [themeMode, setThemeMode] = React.useState<ThemeMode>("dark");
   const [fontScaleLevel, setFontScaleLevel] = React.useState<FontScaleLevel>("standard");
   const [fontScaleLoaded, setFontScaleLoaded] = React.useState(false);
@@ -814,6 +818,7 @@ function CommandCenterScreen() {
     phase: "requesting" | "starting" | "playing";
     initialError: string | null;
   } | null>(null);
+  const [activeReadAgentKey, setActiveReadAgentKey] = React.useState("");
   const [startVisible, setStartVisible] = React.useState(false);
   const [menuVisible, setMenuVisible] = React.useState(false);
   const [cardSearchVisible, setCardSearchVisible] = React.useState(false);
@@ -826,7 +831,10 @@ function CommandCenterScreen() {
   const [relativeTimeTick, setRelativeTimeTick] = React.useState(0);
   const appState = React.useRef(AppState.currentState);
   const copyResetTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const promptCopyResetTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const [copiedResponseKey, setCopiedResponseKey] = React.useState("");
+  const [copiedPromptKey, setCopiedPromptKey] = React.useState("");
+  const [pinningResponseKey, setPinningResponseKey] = React.useState("");
   const theme = themeMode === "dark" ? darkTheme : lightTheme;
   const fontScale = FONT_SCALE_VALUES[fontScaleLevel];
   const layout = React.useMemo(
@@ -1131,6 +1139,59 @@ function CommandCenterScreen() {
     void Haptics.selectionAsync();
   }, []);
 
+  const copyUserPrompt = React.useCallback(async (agent: AgentSession) => {
+    const text = agent.lastUserText || "";
+    if (!text) return;
+    await Clipboard.setStringAsync(text);
+    const key = agentCardKey(agent);
+    setCopiedPromptKey(key);
+    if (promptCopyResetTimer.current) clearTimeout(promptCopyResetTimer.current);
+    promptCopyResetTimer.current = setTimeout(() => {
+      setCopiedPromptKey((current) => (current === key ? "" : current));
+    }, 1200);
+    void Haptics.selectionAsync();
+  }, []);
+
+  const pinAssistantResponse = React.useCallback(
+    (agent: AgentSession) => {
+      const text = agent.lastAssistantText || "";
+      if (!api || !text.trim() || pinCardResponse.isPending) return;
+      const key = agentCardKey(agent);
+      const machineId = agentMachineKey(agent);
+      const base = artifactSlugPart(agent.windowName || agent.kind || "response").slice(0, 60);
+      const name = /\.[a-z0-9]+$/i.test(base) ? base : `${base}.md`;
+      const sourceBase = artifactSlugPart(agent.windowId || agent.paneId || base, "window");
+      setPinningResponseKey(key);
+      pinCardResponse.mutate(
+        {
+          agent,
+          text,
+          name,
+          sourcePath: `agent-response/${machineId}/${sourceBase}`,
+        },
+        {
+          onSuccess: async (data) => {
+            const link = api.url(data.pin.shareUrl).toString();
+            try {
+              await Clipboard.setStringAsync(link);
+            } catch {
+              // The artifact is still pinned even if the clipboard is unavailable.
+            }
+            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          },
+          onError: (error) => {
+            Alert.alert("Pin failed", error instanceof Error ? error.message : String(error));
+            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+          },
+          onSettled: () => {
+            setPinningResponseKey((current) => (current === key ? "" : current));
+          },
+        },
+      );
+    },
+    [api, pinCardResponse],
+  );
+
   const replyToResponse = React.useCallback((agent: AgentSession) => {
     setSelectedAgent(agent);
     setResponseTarget(null);
@@ -1190,6 +1251,7 @@ function CommandCenterScreen() {
     shortcutReadAbort.current?.abort();
     shortcutReadAbort.current = null;
     shortcutActiveRead.current = null;
+    setActiveReadAgentKey("");
     shortcutAudioPlayer.pause();
     shortcutAudioPlayer.replace({});
   }, [shortcutAudioPlayer]);
@@ -1214,6 +1276,7 @@ function CommandCenterScreen() {
         phase: "requesting",
         initialError: shortcutAudioStatus.error,
       };
+      setActiveReadAgentKey(key);
 
       try {
         const response = await api.windowAudioSummary({
@@ -1254,6 +1317,7 @@ function CommandCenterScreen() {
         }
         shortcutReadAbort.current = null;
         shortcutActiveRead.current = null;
+        setActiveReadAgentKey("");
         if (error instanceof Error && error.name === "AbortError") return;
         Alert.alert(
           "Read aloud failed",
@@ -1280,6 +1344,7 @@ function CommandCenterScreen() {
       ) {
         shortcutReadAbort.current = null;
         shortcutActiveRead.current = null;
+        setActiveReadAgentKey("");
         Alert.alert("Read aloud failed", shortcutAudioStatus.error);
       }
       return;
@@ -1287,12 +1352,14 @@ function CommandCenterScreen() {
     if (shortcutAudioStatus.didJustFinish) {
       shortcutReadAbort.current = null;
       shortcutActiveRead.current = null;
+      setActiveReadAgentKey("");
       shortcutAudioPlayer.replace({});
       return;
     }
     if (shortcutAudioStatus.error) {
       shortcutReadAbort.current = null;
       shortcutActiveRead.current = null;
+      setActiveReadAgentKey("");
       Alert.alert("Read aloud failed", shortcutAudioStatus.error);
     }
   }, [
@@ -1466,6 +1533,7 @@ function CommandCenterScreen() {
   React.useEffect(() => {
     return () => {
       if (copyResetTimer.current) clearTimeout(copyResetTimer.current);
+      if (promptCopyResetTimer.current) clearTimeout(promptCopyResetTimer.current);
     };
   }, []);
 
@@ -1691,24 +1759,31 @@ function CommandCenterScreen() {
                           selectAgent();
                           setViewTarget(item);
                         }}
-                        onSsh={
-                          embeddedSshAvailable
-                            ? () => {
-                                selectAgent();
-                                setSshTarget(item);
-                              }
-                            : undefined
-                        }
                         onViewResponse={() => {
                           selectAgent();
                           setResponseTarget(item);
+                        }}
+                        onCopyPrompt={() => {
+                          selectAgent();
+                          copyUserPrompt(item).catch(() => {});
                         }}
                         onCopyResponse={() => {
                           selectAgent();
                           copyAssistantResponse(item).catch(() => {});
                         }}
+                        onPinResponse={() => {
+                          selectAgent();
+                          pinAssistantResponse(item);
+                        }}
+                        onReadAloud={() => {
+                          selectAgent();
+                          void readShortcutAgent(item);
+                        }}
                         onOpenFile={(path) => openAgentFile(item, path)}
+                        promptCopied={copiedPromptKey === key}
                         responseCopied={copiedResponseKey === key}
+                        responsePinning={pinningResponseKey === key}
+                        reading={activeReadAgentKey === key}
                         onTranscript={() => {
                           selectAgent();
                           setTranscriptTarget(item);
@@ -1744,6 +1819,14 @@ function CommandCenterScreen() {
       <WindowViewModal
         target={viewTarget}
         onOpenFile={openAgentFile}
+        onOpenSsh={
+          embeddedSshAvailable
+            ? (agent) => {
+                setViewTarget(null);
+                setSshTarget(agent);
+              }
+            : undefined
+        }
         onClose={() => setViewTarget(null)}
         onDismiss={presentPendingFile}
       />
@@ -2339,11 +2422,16 @@ function AgentCard({
   onRename,
   onDelete,
   onView,
-  onSsh,
   onViewResponse,
+  onCopyPrompt,
   onCopyResponse,
+  onPinResponse,
+  onReadAloud,
   onOpenFile,
+  promptCopied,
   responseCopied,
+  responsePinning,
+  reading,
   onTranscript,
 }: {
   agent: AgentSession;
@@ -2358,11 +2446,16 @@ function AgentCard({
   onRename: () => void;
   onDelete: () => void;
   onView: () => void;
-  onSsh?: () => void;
   onViewResponse: () => void;
+  onCopyPrompt: () => void;
   onCopyResponse: () => void;
+  onPinResponse: () => void;
+  onReadAloud: () => void;
   onOpenFile: (path: string) => void;
+  promptCopied: boolean;
   responseCopied: boolean;
+  responsePinning: boolean;
+  reading: boolean;
   onTranscript: () => void;
 }) {
   const theme = useAppTheme();
@@ -2450,31 +2543,50 @@ function AgentCard({
             onPress={onToggleStar}
           >
             <Star
-              size={15}
+              size={16}
               color={starred ? theme.colors.warning : theme.colors.textMuted}
               fill={starred ? theme.colors.warning : "transparent"}
             />
           </Pressable>
-          <Pressable
-            accessibilityLabel={expanded ? "Hide session actions" : "Show session actions"}
-            accessibilityState={{ expanded: collapsible ? expanded : undefined }}
-            style={styles.sessionRowIconButton}
-            hitSlop={4}
-            onPress={onToggleExpanded}
-          >
-            {expanded ? (
-              <ChevronUp size={16} color={theme.colors.textMuted} />
-            ) : (
-              <MoreVertical size={16} color={theme.colors.textMuted} />
-            )}
-          </Pressable>
+          {collapsible ? (
+            <Pressable
+              accessibilityLabel={expanded ? "Hide session actions" : "Show session actions"}
+              accessibilityState={{ expanded }}
+              style={styles.sessionRowIconButton}
+              hitSlop={4}
+              onPress={onToggleExpanded}
+            >
+              {expanded ? (
+                <ChevronUp size={16} color={theme.colors.textMuted} />
+              ) : (
+                <ChevronDown size={16} color={theme.colors.textMuted} />
+              )}
+            </Pressable>
+          ) : null}
         </View>
       </View>
       {expanded ? (
         <View style={styles.cardBody}>
           {agent.lastUserText ? (
             <View>
-              <CardSectionHeader label="Last prompt" timestamp={agent.lastUserAt} nowMs={nowMs} />
+              <CardSectionHeader
+                label="Last prompt"
+                timestamp={agent.lastUserAt}
+                nowMs={nowMs}
+                actions={
+                  <SectionActionButton
+                    icon={
+                      promptCopied ? (
+                        <Check size={13} color={theme.colors.success} />
+                      ) : (
+                        <Copy size={13} color={theme.colors.textMuted} />
+                      )
+                    }
+                    label="Copy prompt"
+                    onPress={onCopyPrompt}
+                  />
+                }
+              />
               <Text style={styles.promptText} numberOfLines={2}>
                 {agent.lastUserText}
               </Text>
@@ -2482,7 +2594,43 @@ function AgentCard({
           ) : null}
           {agent.lastAssistantText ? (
             <View style={styles.responseBlock}>
-              <CardSectionHeader label="Last response" timestamp={agent.lastAssistantAt} nowMs={nowMs} />
+              <CardSectionHeader
+                label="Last response"
+                timestamp={agent.lastAssistantAt}
+                nowMs={nowMs}
+                actions={
+                  <>
+                    <SectionActionButton
+                      icon={<Maximize size={13} color={theme.colors.textMuted} />}
+                      label="Open response"
+                      onPress={onViewResponse}
+                    />
+                    <SectionActionButton
+                      icon={
+                        responsePinning ? (
+                          <ActivityIndicator size="small" color={theme.colors.accent} />
+                        ) : (
+                          <Pin size={13} color={theme.colors.textMuted} />
+                        )
+                      }
+                      label="Pin response"
+                      onPress={onPinResponse}
+                      disabled={responsePinning}
+                    />
+                    <SectionActionButton
+                      icon={
+                        responseCopied ? (
+                          <Check size={13} color={theme.colors.success} />
+                        ) : (
+                          <Copy size={13} color={theme.colors.textMuted} />
+                        )
+                      }
+                      label="Copy response"
+                      onPress={onCopyResponse}
+                    />
+                  </>
+                }
+              />
               <LinkedPathText
                 text={agent.lastAssistantText}
                 style={styles.answerText}
@@ -2492,50 +2640,41 @@ function AgentCard({
             </View>
           ) : null}
           <View style={styles.cardActions}>
-            {agent.lastAssistantText ? (
-              <>
-                <ActionButton
-                  icon={<Maximize2 size={16} color={theme.colors.text} />}
-                  label="Open response"
-                  onPress={onViewResponse}
-                />
-                <ActionButton
-                  icon={responseCopied ? <Check size={16} color={theme.colors.success} /> : <Copy size={16} color={theme.colors.text} />}
-                  label="Copy response"
-                  onPress={onCopyResponse}
-                />
-              </>
-            ) : null}
             <ActionButton
-              icon={<Terminal size={16} color={theme.colors.text} />}
-              label="Open terminal"
-              onPress={onView}
-            />
-            <ActionButton
-              icon={<SendHorizontal size={16} color={theme.colors.text} />}
-              label="Send command"
+              icon={<MessageSquareText size={16} color={theme.colors.textMuted} />}
+              label="Interact"
               onPress={onSend}
             />
             <ActionButton
-              icon={<ScrollText size={16} color={theme.colors.text} />}
-              label="Open transcript"
+              icon={<List size={16} color={theme.colors.textMuted} />}
+              label="Transcript"
               onPress={onTranscript}
             />
-            {onSsh ? (
-              <ActionButton
-                icon={<KeyRound size={16} color={theme.colors.text} />}
-                label="Open SSH terminal"
-                onPress={onSsh}
-              />
-            ) : null}
             <ActionButton
-              icon={<PencilLine size={16} color={theme.colors.text} />}
+              icon={<PencilLine size={16} color={theme.colors.textMuted} />}
               label="Rename window"
               onPress={onRename}
             />
             <ActionButton
-              icon={<Trash2 size={16} color={theme.colors.danger} />}
-              label="Delete window"
+              icon={
+                reading ? (
+                  <Square size={14} color={theme.colors.textMuted} fill={theme.colors.textMuted} />
+                ) : (
+                  <Volume2 size={16} color={theme.colors.textMuted} />
+                )
+              }
+              label={reading ? "Stop reading" : "Read aloud"}
+              onPress={onReadAloud}
+              active={reading}
+            />
+            <ActionButton
+              icon={<ExternalLink size={16} color={theme.colors.textMuted} />}
+              label="Open terminal"
+              onPress={onView}
+            />
+            <ActionButton
+              icon={<Trash2 size={16} color={theme.colors.textMuted} />}
+              label="Complete and delete window"
               onPress={onDelete}
             />
           </View>
@@ -2549,22 +2688,57 @@ function CardSectionHeader({
   label,
   timestamp,
   nowMs,
+  actions,
 }: {
   label: string;
   timestamp?: string | null;
   nowMs: number;
+  actions?: React.ReactNode;
 }) {
   const styles = useAppStyles();
   const relative = relativeTimeLabel(timestamp, nowMs);
   return (
     <View style={styles.cardSectionHeader}>
-      <Text style={styles.cardSectionLabel}>{label}</Text>
-      {relative ? (
-        <Text style={styles.cardSectionTime} accessibilityLabel={exactTimeLabel(timestamp)}>
-          {relative}
-        </Text>
-      ) : null}
+      <View style={styles.cardSectionHeadingText}>
+        <Text style={styles.cardSectionLabel}>{label}</Text>
+        {relative ? (
+          <Text style={styles.cardSectionTime} accessibilityLabel={exactTimeLabel(timestamp)}>
+            {relative}
+          </Text>
+        ) : null}
+      </View>
+      {actions ? <View style={styles.cardSectionActions}>{actions}</View> : null}
     </View>
+  );
+}
+
+function SectionActionButton({
+  icon,
+  label,
+  onPress,
+  disabled,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  const styles = useAppStyles();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      disabled={disabled}
+      hitSlop={10}
+      style={({ pressed }) => [
+        styles.sectionActionButton,
+        pressed ? styles.actionButtonPressed : null,
+        disabled ? styles.disabledButton : null,
+      ]}
+      onPress={onPress}
+    >
+      {icon}
+    </Pressable>
   );
 }
 
@@ -2586,12 +2760,14 @@ function ActionButton({
   const styles = useAppStyles();
   return (
     <Pressable
+      accessibilityRole="button"
       accessibilityLabel={label}
       disabled={disabled}
       hitSlop={5}
-      style={[
+      style={({ pressed }) => [
         styles.actionButton,
         active ? styles.actionButtonActive : null,
+        pressed ? styles.actionButtonPressed : null,
         disabled ? styles.disabledButton : null,
       ]}
       onPress={(event) => {
@@ -5554,11 +5730,13 @@ function EmbeddedSshModal({
 function WindowViewModal({
   target,
   onOpenFile,
+  onOpenSsh,
   onClose,
   onDismiss,
 }: {
   target: AgentSession | null;
   onOpenFile: (agent: AgentSession, path: string) => void;
+  onOpenSsh?: (agent: AgentSession) => void;
   onClose: () => void;
   onDismiss?: () => void;
 }) {
@@ -6273,6 +6451,13 @@ function WindowViewModal({
           </Text>
         </View>
         <View style={styles.sessionScreenActions}>
+          {target && onOpenSsh ? (
+            <ActionButton
+              icon={<KeyRound size={16} color={theme.colors.textMuted} />}
+              label="Open SSH terminal"
+              onPress={() => onOpenSsh(target)}
+            />
+          ) : null}
           <Text accessibilityLabel={`Terminal text size ${Math.round(terminalTextScale * 100)} percent`} style={styles.sessionZoomLabel}>
             {Math.round(terminalTextScale * 100)}%
           </Text>
@@ -8615,14 +8800,15 @@ function createStyles(
 	    flexDirection: "row",
 	  },
 	  sessionRowControls: {
-	    width: 42,
+	    minWidth: 38,
 	    flexShrink: 0,
+	    flexDirection: "row",
 	    alignItems: "center",
-	    justifyContent: "center",
+	    justifyContent: "flex-end",
 	    paddingVertical: 4,
 	  },
 	  sessionRowIconButton: {
-	    width: 38,
+	    width: 34,
 	    height: 34,
 	    borderRadius: theme.radii.md,
 	    alignItems: "center",
@@ -8857,9 +9043,23 @@ function createStyles(
   cardSectionHeader: {
     minWidth: 0,
     flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    marginBottom: 3,
+  },
+  cardSectionHeadingText: {
+    minWidth: 0,
+    flex: 1,
+    flexDirection: "row",
     alignItems: "baseline",
     gap: 7,
-    marginBottom: 3,
+  },
+  cardSectionActions: {
+    flexShrink: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
   },
   cardSectionLabel: {
     ...theme.typography.meta,
@@ -8891,16 +9091,27 @@ function createStyles(
   cardActions: {
     flexDirection: "row",
     flexWrap: "nowrap",
-    justifyContent: "space-between",
-    gap: 2,
+    justifyContent: "flex-end",
+    gap: 6,
   },
-  actionButton: {
-    width: 34,
-    height: 34,
+  sectionActionButton: {
+    width: 24,
+    height: 24,
     borderRadius: theme.radii.md,
-    backgroundColor: theme.colors.surface,
+    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
+  },
+  actionButton: {
+    width: 32,
+    height: 32,
+    borderRadius: theme.radii.md,
+    backgroundColor: "transparent",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  actionButtonPressed: {
+    backgroundColor: theme.colors.surfaceMuted,
   },
   actionButtonActive: {
     borderColor: theme.colors.accent,
