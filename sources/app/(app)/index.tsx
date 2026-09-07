@@ -75,12 +75,12 @@ import {
   Image as ImageIcon,
   ImagePlus,
   Info,
+  KeyRound,
   Link2,
   ListPlus,
   Laptop,
   LogOut,
   Maximize2,
-  MessageSquareText,
   Mic,
   MicOff,
   Minimize2,
@@ -89,9 +89,12 @@ import {
   Moon,
   Pin,
   Play,
+  PencilLine,
   Plus,
   RefreshCcw,
+  ScrollText,
   Send,
+  SendHorizontal,
   Star,
   Settings2,
   Smartphone,
@@ -2492,29 +2495,49 @@ function AgentCard({
             {agent.lastAssistantText ? (
               <>
                 <ActionButton
-                  icon={<Maximize2 size={15} color={theme.colors.text} />}
+                  icon={<Maximize2 size={16} color={theme.colors.text} />}
                   label="Open response"
                   onPress={onViewResponse}
                 />
                 <ActionButton
-                  icon={responseCopied ? <Check size={15} color={theme.colors.success} /> : <Copy size={15} color={theme.colors.text} />}
+                  icon={responseCopied ? <Check size={16} color={theme.colors.success} /> : <Copy size={16} color={theme.colors.text} />}
                   label="Copy response"
                   onPress={onCopyResponse}
                 />
               </>
             ) : null}
-            <ActionButton icon={<Eye size={15} color={theme.colors.text} />} label="Terminal" onPress={onView} />
-            <ActionButton icon={<Send size={15} color={theme.colors.text} />} label="Send" onPress={onSend} />
-            <ActionButton icon={<MessageSquareText size={15} color={theme.colors.text} />} label="Transcript" onPress={onTranscript} />
+            <ActionButton
+              icon={<Terminal size={16} color={theme.colors.text} />}
+              label="Open terminal"
+              onPress={onView}
+            />
+            <ActionButton
+              icon={<SendHorizontal size={16} color={theme.colors.text} />}
+              label="Send command"
+              onPress={onSend}
+            />
+            <ActionButton
+              icon={<ScrollText size={16} color={theme.colors.text} />}
+              label="Open transcript"
+              onPress={onTranscript}
+            />
             {onSsh ? (
-              <ActionButton icon={<Laptop size={15} color={theme.colors.text} />} label="SSH" onPress={onSsh} />
+              <ActionButton
+                icon={<KeyRound size={16} color={theme.colors.text} />}
+                label="Open SSH terminal"
+                onPress={onSsh}
+              />
             ) : null}
             <ActionButton
-              icon={<Edit3 size={15} color={theme.colors.text} />}
-              label="Rename"
+              icon={<PencilLine size={16} color={theme.colors.text} />}
+              label="Rename window"
               onPress={onRename}
             />
-            <ActionButton icon={<Trash2 size={15} color={theme.colors.danger} />} label="Delete session" onPress={onDelete} />
+            <ActionButton
+              icon={<Trash2 size={16} color={theme.colors.danger} />}
+              label="Delete window"
+              onPress={onDelete}
+            />
           </View>
         </View>
       ) : null}
