@@ -1641,7 +1641,7 @@ function CommandCenterScreen() {
               </Text>
             </View>
             <View style={styles.sessionCardGrid}>
-              {group.agents.map((item) => {
+              {group.agents.map((item, index) => {
                 const key = agentCardKey(item);
                 const starred = isAgentStarred(item, stars);
                 const recentActivity = isRecentActivity(
@@ -1661,56 +1661,61 @@ function CommandCenterScreen() {
                   }
                 };
                 return (
-                  <View key={key} style={styles.cardGridItem}>
-                    <AgentCard
-                      agent={item}
-                      nowMs={relativeTimeNow}
-                      starred={starred}
-                      selected={selectedAgent ? agentCardKey(selectedAgent) === key : false}
-                      collapsible={foldState.collapsible}
-                      expanded={foldState.expanded}
-                      onToggleStar={() => toggleStar(item)}
-                      onToggleExpanded={toggleExpanded}
-                      onSend={() => {
-                        selectAgent();
-                        setSendTarget(item);
-                      }}
-                      onRename={() => {
-                        selectAgent();
-                        setRenameTarget(item);
-                      }}
-                      onDelete={() => {
-                        selectAgent();
-                        confirmDeleteAgent(item);
-                      }}
-                      onView={() => {
-                        selectAgent();
-                        setViewTarget(item);
-                      }}
-                      onSsh={
-                        embeddedSshAvailable
-                          ? () => {
-                              selectAgent();
-                              setSshTarget(item);
-                            }
-                          : undefined
-                      }
-                      onViewResponse={() => {
-                        selectAgent();
-                        setResponseTarget(item);
-                      }}
-                      onCopyResponse={() => {
-                        selectAgent();
-                        copyAssistantResponse(item).catch(() => {});
-                      }}
-                      onOpenFile={(path) => openAgentFile(item, path)}
-                      responseCopied={copiedResponseKey === key}
-                      onTranscript={() => {
-                        selectAgent();
-                        setTranscriptTarget(item);
-                      }}
-                    />
-                  </View>
+                  <React.Fragment key={key}>
+                    <View style={styles.cardGridItem}>
+                      <AgentCard
+                        agent={item}
+                        nowMs={relativeTimeNow}
+                        starred={starred}
+                        selected={selectedAgent ? agentCardKey(selectedAgent) === key : false}
+                        collapsible={foldState.collapsible}
+                        expanded={foldState.expanded}
+                        onToggleStar={() => toggleStar(item)}
+                        onToggleExpanded={toggleExpanded}
+                        onSend={() => {
+                          selectAgent();
+                          setSendTarget(item);
+                        }}
+                        onRename={() => {
+                          selectAgent();
+                          setRenameTarget(item);
+                        }}
+                        onDelete={() => {
+                          selectAgent();
+                          confirmDeleteAgent(item);
+                        }}
+                        onView={() => {
+                          selectAgent();
+                          setViewTarget(item);
+                        }}
+                        onSsh={
+                          embeddedSshAvailable
+                            ? () => {
+                                selectAgent();
+                                setSshTarget(item);
+                              }
+                            : undefined
+                        }
+                        onViewResponse={() => {
+                          selectAgent();
+                          setResponseTarget(item);
+                        }}
+                        onCopyResponse={() => {
+                          selectAgent();
+                          copyAssistantResponse(item).catch(() => {});
+                        }}
+                        onOpenFile={(path) => openAgentFile(item, path)}
+                        responseCopied={copiedResponseKey === key}
+                        onTranscript={() => {
+                          selectAgent();
+                          setTranscriptTarget(item);
+                        }}
+                      />
+                    </View>
+                    {index < group.agents.length - 1 ? (
+                      <View style={styles.sessionCardDivider} />
+                    ) : null}
+                  </React.Fragment>
                 );
               })}
             </View>
@@ -8466,6 +8471,15 @@ function createStyles(
 	    width: "100%",
 	    minWidth: 0,
 	  },
+	  sessionCardDivider: {
+	    height: 0,
+	    marginHorizontal: 14,
+	    marginVertical: 4,
+	    borderTopWidth: 1,
+	    borderStyle: "dashed",
+	    borderColor: theme.colors.border,
+	    opacity: 0.72,
+	  },
   emptyList: {
     flexGrow: 1,
     justifyContent: "center",
@@ -8488,8 +8502,6 @@ function createStyles(
 	    position: "relative",
 	    minWidth: 0,
 	    backgroundColor: "transparent",
-	    borderBottomWidth: StyleSheet.hairlineWidth,
-	    borderBottomColor: theme.colors.border,
 	  },
 	  cardCollapsed: {
 	    borderRadius: theme.radii.lg,
