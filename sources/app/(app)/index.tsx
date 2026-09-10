@@ -39,6 +39,7 @@ import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Markdown, { type RenderRules } from "react-native-markdown-display";
+import { MermaidBlock } from "@/tmux-mobile/mermaid-block";
 import { toByteArray } from "base64-js";
 import CJMUXVisionDevice from "../../../modules/cjmux-vision-device";
 import {
@@ -669,11 +670,14 @@ function createMarkdownPathRules(
         {trimCodeContent(String(node.content || ""))}
       </Text>
     ),
-    fence: (node, _children, _parentNodes, styles, inheritedStyles = {}) => (
-      <Text key={node.key} selectable={selectable} style={[inheritedStyles, styles.fence]}>
-        {trimCodeContent(String(node.content || ""))}
-      </Text>
-    ),
+    fence: (node, _children, _parentNodes, styles, inheritedStyles = {}) =>
+      String((node as typeof node & { sourceInfo?: string }).sourceInfo || "").trim().toLowerCase().split(/\s+/)[0] === "mermaid" ? (
+        <MermaidBlock key={node.key} source={String(node.content || "")} textStyle={[inheritedStyles, styles.fence]} />
+      ) : (
+        <Text key={node.key} selectable={selectable} style={[inheritedStyles, styles.fence]}>
+          {trimCodeContent(String(node.content || ""))}
+        </Text>
+      ),
     link: (node, children, _parentNodes, styles, onLinkPress) => (
       <Text
         key={node.key}
@@ -1127,6 +1131,7 @@ function CommandCenterScreen() {
   );
 
   const copyAssistantResponse = React.useCallback(async (agent: AgentSession) => {
+    if (agent.fullTextError) return;
     const text = agent.lastAssistantText || "";
     if (!text) return;
     await Clipboard.setStringAsync(text);
@@ -1140,6 +1145,7 @@ function CommandCenterScreen() {
   }, []);
 
   const copyUserPrompt = React.useCallback(async (agent: AgentSession) => {
+    if (agent.fullTextError) return;
     const text = agent.lastUserText || "";
     if (!text) return;
     await Clipboard.setStringAsync(text);
@@ -1155,7 +1161,7 @@ function CommandCenterScreen() {
   const pinAssistantResponse = React.useCallback(
     (agent: AgentSession) => {
       const text = agent.lastAssistantText || "";
-      if (!api || !text.trim() || pinCardResponse.isPending) return;
+      if (!api || !text.trim() || agent.fullTextError || pinCardResponse.isPending) return;
       const key = agentCardKey(agent);
       const machineId = agentMachineKey(agent);
       const base = artifactSlugPart(agent.windowName || agent.kind || "response").slice(0, 60);
@@ -1548,6 +1554,9 @@ function CommandCenterScreen() {
     const subscription = AppState.addEventListener("change", (nextState) => {
       const previousState = appState.current;
       appState.current = nextState;
+      if (nextState !== "active") {
+        void queryClient.cancelQueries({ queryKey: commandCenterKey });
+      }
       if ((previousState === "background" || previousState === "inactive") && nextState === "active") {
         setRelativeTimeTick((tick) => tick + 1);
         queryClient.invalidateQueries({ queryKey: commandCenterKey }).catch(() => {});
@@ -2460,6 +2469,10 @@ function AgentCard({
 }) {
   const theme = useAppTheme();
   const styles = useAppStyles();
+  const fontScale = useFontScale();
+  const queryClient = useQueryClient();
+  const markdownStyle = React.useMemo(() => createMarkdownStyles(theme, fontScale), [theme, fontScale]);
+  const markdownRules = React.useMemo(() => createMarkdownPathRules(onOpenFile, { agent, selectable: true }), [onOpenFile, agent]);
   const status = agent.waitingForInput ? "waiting" : agent.status || agent.turn || "unverified";
   const running = status === "running";
   const summary = sessionCardSummary(agent);
@@ -2567,6 +2580,13 @@ function AgentCard({
       </View>
       {expanded ? (
         <View style={styles.cardBody}>
+          {agent.fullTextError ? (
+            <Pressable accessibilityRole="button" onPress={() => {
+              void queryClient.invalidateQueries({ queryKey: commandCenterKey });
+            }}>
+              <Text style={styles.errorText}>Complete response unavailable · Tap to retry</Text>
+            </Pressable>
+          ) : null}
           {agent.lastUserText ? (
             <View>
               <CardSectionHeader
@@ -2583,6 +2603,7 @@ function AgentCard({
                       )
                     }
                     label="Copy prompt"
+                    disabled={Boolean(agent.fullTextError)}
                     onPress={onCopyPrompt}
                   />
                 }
@@ -2603,6 +2624,7 @@ function AgentCard({
                     <SectionActionButton
                       icon={<Maximize size={13} color={theme.colors.textMuted} />}
                       label="Open response"
+                      disabled={Boolean(agent.fullTextError)}
                       onPress={onViewResponse}
                     />
                     <SectionActionButton
@@ -2615,7 +2637,7 @@ function AgentCard({
                       }
                       label="Pin response"
                       onPress={onPinResponse}
-                      disabled={responsePinning}
+                      disabled={responsePinning || Boolean(agent.fullTextError)}
                     />
                     <SectionActionButton
                       icon={
@@ -2626,17 +2648,15 @@ function AgentCard({
                         )
                       }
                       label="Copy response"
+                      disabled={Boolean(agent.fullTextError)}
                       onPress={onCopyResponse}
                     />
                   </>
                 }
               />
-              <LinkedPathText
-                text={agent.lastAssistantText}
-                style={styles.answerText}
-                numberOfLines={3}
-                onOpenPath={onOpenFile}
-              />
+              <Markdown style={markdownStyle} rules={markdownRules}>
+                {agent.lastAssistantText}
+              </Markdown>
             </View>
           ) : null}
           <View style={styles.cardActions}>
@@ -2664,6 +2684,7 @@ function AgentCard({
                 )
               }
               label={reading ? "Stop reading" : "Read aloud"}
+              disabled={Boolean(agent.fullTextError)}
               onPress={onReadAloud}
               active={reading}
             />
@@ -5007,6 +5028,7 @@ function RenameModal({ target, onClose }: { target: AgentSession | null; onClose
           value={name}
           onChangeText={setName}
           autoFocus
+          selectTextOnFocus
           autoCapitalize="none"
           autoCorrect={false}
           numberOfLines={1}

@@ -90,6 +90,9 @@ export interface AgentSession {
   lastUserText?: string;
   lastUserAt?: string | null;
   lastAssistantText?: string;
+  lastAssistantTruncated?: boolean;
+  lastUserTruncated?: boolean;
+  fullTextError?: string;
   lastAssistantAt?: string | null;
   lastRole?: string;
   turn?: string;

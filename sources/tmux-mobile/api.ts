@@ -1,4 +1,5 @@
 import Constants from "expo-constants";
+import { createFullResponseLoader } from "./full-response";
 import { EncodingType, readAsStringAsync } from "expo-file-system/legacy";
 import { toByteArray } from "base64-js";
 import type {
@@ -106,6 +107,8 @@ interface RequestOptions {
 }
 
 export class TmuxMobileApi {
+  private completeResponses = createFullResponseLoader((machineId, paneId, mux, signal) =>
+    this.transcript(machineId, paneId, { latest: true, mux, signal }));
   readonly baseUrl: string;
   readonly token: string;
 
@@ -201,8 +204,9 @@ export class TmuxMobileApi {
     });
   }
 
-  commandCenter(machineId?: string): Promise<CommandCenterResponse> {
-    return this.request("/api/command-center", { machineId });
+  async commandCenter(machineId?: string, signal?: AbortSignal): Promise<CommandCenterResponse> {
+    const data = await this.request<CommandCenterResponse>("/api/command-center", { machineId, signal });
+    return { ...data, agents: await this.completeResponses(data.agents || [], signal) };
   }
 
   authorizeSsh(
@@ -424,9 +428,12 @@ export class TmuxMobileApi {
     return this.request(`/api/capture?${params.toString()}`, { machineId });
   }
 
-  transcript(machineId: string, paneId: string): Promise<AgentTranscriptResponse> {
+  transcript(machineId: string, paneId: string, options: { latest?: boolean; mux?: string; signal?: AbortSignal } = {}): Promise<AgentTranscriptResponse> {
     const params = new URLSearchParams({ paneId });
-    return this.request(`/api/agent-transcript?${params.toString()}`, { machineId });
+    if (options.latest) params.set("latest", "1");
+    return this.request(`/api/agent-transcript?${params.toString()}`, {
+      machineId, signal: options.signal, headers: { "x-mux": options.mux || "tmux" },
+    });
   }
 
   windowAudioSummary(input: {

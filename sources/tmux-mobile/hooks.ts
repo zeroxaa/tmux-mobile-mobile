@@ -20,9 +20,10 @@ export function useCommandCenter() {
   return useQuery({
     queryKey: commandCenterKey,
     enabled: Boolean(api),
-    queryFn: async () => {
+    retry: false,
+    queryFn: async ({ signal }) => {
       if (!api) throw new Error("Not signed in");
-      return api.commandCenter();
+      return api.commandCenter(undefined, signal);
     },
   });
 }
