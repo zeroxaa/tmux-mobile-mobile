@@ -175,6 +175,9 @@ import {
   sessionModelLabel,
 } from "@/tmux-mobile/session-card";
 import {
+  CARD_SORT_KEY,
+  normalizeCardSort,
+  type CardSort,
   groupAgentSessions,
   groupIndexForAgent,
   nextExpandedAgentKey,
@@ -825,6 +828,22 @@ function CommandCenterScreen() {
   const [activeReadAgentKey, setActiveReadAgentKey] = React.useState("");
   const [startVisible, setStartVisible] = React.useState(false);
   const [menuVisible, setMenuVisible] = React.useState(false);
+  const [cardSort, setCardSort] = React.useState<CardSort>("current");
+  const cardSortTouched = React.useRef(false);
+  React.useEffect(() => {
+    let mounted = true;
+    AsyncStorage.getItem(CARD_SORT_KEY).then((value) => {
+      if (mounted && !cardSortTouched.current) setCardSort(normalizeCardSort(value));
+    }).catch(() => {});
+    return () => { mounted = false; };
+  }, []);
+  const sortWrite = React.useRef(Promise.resolve());
+  const updateCardSort = React.useCallback((next: CardSort) => {
+    cardSortTouched.current = true;
+    setCardSort(next);
+    sortWrite.current = sortWrite.current.then(() => AsyncStorage.setItem(CARD_SORT_KEY, next)).catch(() => {});
+    void Haptics.selectionAsync();
+  }, []);
   const [cardSearchVisible, setCardSearchVisible] = React.useState(false);
   const [pinsVisible, setPinsVisible] = React.useState(false);
   const [settingsVisible, setSettingsVisible] = React.useState(false);
@@ -970,8 +989,9 @@ function CommandCenterScreen() {
       filtered,
       stars,
       machines.map((machine) => machineKey(machine)),
+      cardSort,
     );
-  }, [machineFilter, machines, rawAgents, stars]);
+  }, [machineFilter, machines, rawAgents, stars, cardSort]);
   const sessionGroups = groupedAgents.groups;
   const agents = groupedAgents.agents;
 
@@ -1902,6 +1922,8 @@ function CommandCenterScreen() {
       />
       <CommandMenu
         visible={menuVisible}
+        cardSort={cardSort}
+        onCardSortChange={updateCardSort}
         topOffset={insets.top + 54}
         onClose={() => setMenuVisible(false)}
         onStartAgent={openStartAgent}
@@ -2965,6 +2987,8 @@ function CardSearchModal({
 }
 
 function CommandMenu({
+  cardSort,
+  onCardSortChange,
   visible,
   topOffset,
   onClose,
@@ -2976,6 +3000,8 @@ function CommandMenu({
   themeMode,
   onSignOut,
 }: {
+  cardSort: CardSort;
+  onCardSortChange: (next: CardSort) => void;
   visible: boolean;
   topOffset: number;
   onClose: () => void;
@@ -3025,6 +3051,18 @@ function CommandMenu({
             label={themeMode === "dark" ? "Light theme" : "Dark theme"}
             onPress={onToggleTheme}
           />
+          <View style={styles.menuDivider} />
+          <Text style={[styles.menuActionText, { paddingHorizontal: 12, color: theme.colors.textMuted }]}>Sort cards · Starred first</Text>
+          {(["current", "recent"] as const).map((option) => (
+            <Pressable key={option} style={styles.menuAction}
+              accessibilityRole="radio" accessibilityState={{ checked: cardSort === option }}
+              onPress={() => onCardSortChange(option)}>
+              <View style={styles.menuActionIcon}>
+                {cardSort === option ? <Check size={18} color={theme.colors.accent} /> : null}
+              </View>
+              <Text style={styles.menuActionText}>{option === "recent" ? "Recent activity" : "Current order"}</Text>
+            </Pressable>
+          ))}
           <View style={styles.menuDivider} />
           <MenuAction
             icon={<LogOut size={18} color={theme.colors.danger} />}

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { agentStarKey, type AgentSession } from "@/tmux-mobile/types";
 import {
   groupAgentSessions,
+  normalizeCardSort,
   groupIndexForAgent,
   nextExpandedAgentKey,
 } from "@/tmux-mobile/session-groups";
@@ -58,6 +59,25 @@ describe("groupAgentSessions", () => {
       ["work", "Alpha · tmux"],
       ["work", "Beta · tmux"],
     ]);
+  });
+
+  it("sorts across sessions by recent activity while keeping stars first", () => {
+    const source = [
+      agent({ windowId: "@new", sessionName: "alpha", windowIndex: 0, lastActivityAt: "2026-09-14T12:00:00Z" }),
+      agent({ windowId: "@old", sessionName: "alpha", windowIndex: 1, lastActivityAt: "2026-09-12T12:00:00Z" }),
+      agent({ windowId: "@middle", sessionId: "$2", sessionName: "beta", lastActivityAt: "invalid", lastAssistantAt: "2026-09-13T12:00:00Z" }),
+      agent({ windowId: "@star", windowIndex: 9, sessionId: "$2", sessionName: "beta" }),
+      agent({ windowId: "@missing", sessionId: "$3", sessionName: "gamma" }),
+    ];
+    const stars = new Set([agentStarKey(source[3])]);
+    expect(groupAgentSessions(source, stars).agents.map(a => a.windowId)).toEqual(["@star", "@new", "@old", "@middle", "@missing"]);
+    const recent = groupAgentSessions(source, stars, [], "recent");
+    expect(recent.agents.map(a => a.windowId)).toEqual(["@star", "@new", "@middle", "@old", "@missing"]);
+    expect(recent.sessionCount).toBe(3);
+    expect(normalizeCardSort("recent")).toBe("recent");
+    expect(normalizeCardSort(null)).toBe("current");
+    expect(normalizeCardSort("bad")).toBe("current");
+    expect(source[0].windowId).toBe("@new");
   });
 
   it("returns the containing group for keyboard navigation", () => {

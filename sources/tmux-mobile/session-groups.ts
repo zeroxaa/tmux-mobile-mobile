@@ -5,11 +5,17 @@ import {
   type AgentSession,
 } from "./types";
 
+export const CARD_SORT_KEY = "tmux-mobile-card-sort";
+export type CardSort = "current" | "recent";
+export function normalizeCardSort(value: unknown): CardSort {
+  return value === "recent" ? "recent" : "current";
+}
+
 export type AgentSessionGroup = {
   key: string;
   title: string;
   subtitle: string;
-  kind: "starred" | "session";
+  kind: "starred" | "session" | "recent";
   agents: AgentSession[];
 };
 
@@ -80,6 +86,7 @@ export function groupAgentSessions(
   source: AgentSession[],
   stars: Set<string>,
   machineOrder: string[] = [],
+  sortBy: CardSort = "current",
 ): GroupedAgentSessions {
   const machineRank = new Map(machineOrder.map((key, index) => [key, index]));
   const starred: AgentSession[] = [];
@@ -132,7 +139,15 @@ export function groupAgentSessions(
       agents: starred,
     });
   }
-  groups.push(...sessionGroups);
+  if (sortBy === "recent") {
+    const recent = sessionGroups.flatMap((group) => group.agents).sort(compareStarred);
+    if (recent.length) groups.push({
+      key: "recent", title: "Recent activity", subtitle: "Newest first · Starred cards stay on top",
+      kind: "recent", agents: recent,
+    });
+  } else {
+    groups.push(...sessionGroups);
+  }
 
   return {
     groups,
