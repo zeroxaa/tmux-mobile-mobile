@@ -65,5 +65,16 @@ target 'CJMUX' do
       :mac_catalyst_enabled => false,
       :ccache_enabled => ccache_enabled?(podfile_properties),
     )
+    # Xcode 27 rejects old deployment targets on resource-bundle pods.
+    # Keep all pods at least at the app's existing minimum OS version.
+    minimum_ios = Gem::Version.new(podfile_properties['ios.deploymentTarget'] || '16.4')
+    installer.pods_project.targets.each do |pod_target|
+      pod_target.build_configurations.each do |build_config|
+        current = build_config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
+        if current && Gem::Version.new(current) < minimum_ios
+          build_config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = minimum_ios.to_s
+        end
+      end
+    end
   end
 end

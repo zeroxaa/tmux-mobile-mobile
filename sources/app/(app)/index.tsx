@@ -1,3 +1,4 @@
+import { conversationPath } from "@/tmux-mobile/conversation-link";
 import * as React from "react";
 import {
   ActivityIndicator,
@@ -242,6 +243,7 @@ const MACHINE_CHIP_READ_AT_KEY = "tmux-mobile.machine-chip-read-at";
 const MACHINE_CHIP_READ_GRACE_MS = 5_000;
 const RELATIVE_TIME_REFRESH_MS = 60_000;
 const CONTROLLER_BROWSER_HANDOFF_PATHS = new Set([
+  "/conversation",
   "/pin",
   "/api/pin",
   "/api/file-view",
@@ -1813,6 +1815,17 @@ function CommandCenterScreen() {
                         responseCopied={copiedResponseKey === key}
                         responsePinning={pinningResponseKey === key}
                         reading={activeReadAgentKey === key}
+                        onConversation={() => {
+                          const path = conversationPath(item);
+                          if (api && path) openAuthenticatedControllerUrl(api, api.url(path).toString())
+                            .catch(error => Alert.alert("Could not open conversation", error.message));
+                        }}
+                        onCopyConversation={() => {
+                          const path = conversationPath(item);
+                          if (api && path) Clipboard.setStringAsync(api.url(path).toString())
+                            .then(() => Alert.alert("Link copied", "Only people with session access can open this conversation."))
+                            .catch(error => Alert.alert("Could not copy link", error.message));
+                        }}
                         onTranscript={() => {
                           selectAgent();
                           setTranscriptTarget(item);
@@ -2464,6 +2477,8 @@ function AgentCard({
   responsePinning,
   reading,
   onTranscript,
+  onConversation,
+  onCopyConversation,
 }: {
   agent: AgentSession;
   nowMs: number;
@@ -2488,6 +2503,8 @@ function AgentCard({
   responsePinning: boolean;
   reading: boolean;
   onTranscript: () => void;
+  onConversation: () => void;
+  onCopyConversation: () => void;
 }) {
   const theme = useAppTheme();
   const styles = useAppStyles();
@@ -2692,6 +2709,18 @@ function AgentCard({
               label="Transcript"
               onPress={onTranscript}
             />
+            {conversationPath(agent) ? <>
+              <ActionButton
+                icon={<MessageSquareText size={16} color={theme.colors.textMuted} />}
+                label="Conversation"
+                onPress={onConversation}
+              />
+              <ActionButton
+                icon={<Copy size={16} color={theme.colors.textMuted} />}
+                label="Copy conversation link"
+                onPress={onCopyConversation}
+              />
+            </> : null}
             <ActionButton
               icon={<PencilLine size={16} color={theme.colors.textMuted} />}
               label="Rename window"
