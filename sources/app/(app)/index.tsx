@@ -59,6 +59,7 @@ import type { AppTheme } from "@/theme";
 import {
   Check,
   AlertCircle,
+  BookOpen,
   ArrowDown,
   ArrowUp,
   CheckCircle,
@@ -85,7 +86,6 @@ import {
   LogOut,
   Maximize,
   Maximize2,
-  MessageSquareText,
   Mic,
   MicOff,
   Minimize2,
@@ -2700,7 +2700,7 @@ function AgentCard({
           ) : null}
           <View style={styles.cardActions}>
             <ActionButton
-              icon={<MessageSquareText size={16} color={theme.colors.textMuted} />}
+              icon={<Send size={16} color={theme.colors.textMuted} />}
               label="Interact"
               onPress={onSend}
             />
@@ -2711,12 +2711,13 @@ function AgentCard({
             />
             {conversationPath(agent) ? <>
               <ActionButton
-                icon={<MessageSquareText size={16} color={theme.colors.textMuted} />}
+                icon={<BookOpen size={16} color={theme.colors.textMuted} />}
                 label="Conversation"
+                showLabel
                 onPress={onConversation}
               />
               <ActionButton
-                icon={<Copy size={16} color={theme.colors.textMuted} />}
+                icon={<Link2 size={16} color={theme.colors.textMuted} />}
                 label="Copy conversation link"
                 onPress={onCopyConversation}
               />
@@ -2821,6 +2822,7 @@ function ActionButton({
   disabled,
   active,
   stopPropagation,
+  showLabel = false,
 }: {
   icon: React.ReactNode;
   label: string;
@@ -2828,6 +2830,7 @@ function ActionButton({
   disabled?: boolean;
   active?: boolean;
   stopPropagation?: boolean;
+  showLabel?: boolean;
 }) {
   const styles = useAppStyles();
   return (
@@ -2838,6 +2841,7 @@ function ActionButton({
       hitSlop={5}
       style={({ pressed }) => [
         styles.actionButton,
+        showLabel ? styles.actionButtonLabeled : null,
         active ? styles.actionButtonActive : null,
         pressed ? styles.actionButtonPressed : null,
         disabled ? styles.disabledButton : null,
@@ -2848,6 +2852,7 @@ function ActionButton({
       }}
     >
       {icon}
+      {showLabel ? <Text style={styles.actionButtonLabel}>{label}</Text> : null}
     </Pressable>
   );
 }
@@ -9179,7 +9184,7 @@ function createStyles(
 	  },
   cardActions: {
     flexDirection: "row",
-    flexWrap: "nowrap",
+    flexWrap: "wrap",
     justifyContent: "flex-end",
     gap: 6,
   },
@@ -9198,6 +9203,20 @@ function createStyles(
     backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
+  },
+  actionButtonLabeled: {
+    width: "auto",
+    minHeight: 32,
+    height: "auto",
+    flexDirection: "row",
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    gap: 6,
+  },
+  actionButtonLabel: {
+    color: theme.colors.textMuted,
+    fontSize: 12,
+    fontWeight: "500",
   },
   actionButtonPressed: {
     backgroundColor: theme.colors.surfaceMuted,

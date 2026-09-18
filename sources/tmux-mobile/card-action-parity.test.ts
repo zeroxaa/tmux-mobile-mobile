@@ -20,16 +20,20 @@ function expectInOrder(source: string, values: string[]) {
 }
 
 describe("Command Center card action parity", () => {
-  it("keeps the iOS footer in the same semantic order as the web card", () => {
+  it("keeps the shared iOS and Android footer actions in order", () => {
     expectInOrder(cardSource, [
       'label="Interact"',
       'label="Transcript"',
+      'label="Conversation"',
+      'label="Copy conversation link"',
       'label="Rename window"',
       'label={reading ? "Stop reading" : "Read aloud"}',
       'label="Open terminal"',
       'label="Complete and delete window"',
     ]);
-    expect(cardSource).toContain("<MessageSquareText");
+    expect(cardSource).toContain("<Send");
+    expect(cardSource).toContain("<BookOpen");
+    expect(cardSource).toContain("<Link2");
     expect(cardSource).toContain("<List");
     expect(cardSource).toContain("<PencilLine");
     expect(cardSource).toContain("<Volume2");
