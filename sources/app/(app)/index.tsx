@@ -244,6 +244,7 @@ const MACHINE_CHIP_READ_GRACE_MS = 5_000;
 const RELATIVE_TIME_REFRESH_MS = 60_000;
 const CONTROLLER_BROWSER_HANDOFF_PATHS = new Set([
   "/conversation",
+  "/reports",
   "/pin",
   "/api/pin",
   "/api/file-view",
@@ -1940,6 +1941,12 @@ function CommandCenterScreen() {
         topOffset={insets.top + 54}
         onClose={() => setMenuVisible(false)}
         onStartAgent={openStartAgent}
+        onProgressReports={() => {
+          if (!api) return;
+          setMenuVisible(false);
+          openAuthenticatedControllerUrl(api, api.url("/reports").toString())
+            .catch(error => Alert.alert("Could not open reports", error.message));
+        }}
         onPinnedArtifacts={openPinnedArtifacts}
         onRefresh={refreshCommandCenter}
         onSettings={openSettings}
@@ -3023,6 +3030,7 @@ function CommandMenu({
   onClose,
   onStartAgent,
   onPinnedArtifacts,
+  onProgressReports,
   onRefresh,
   onSettings,
   onToggleTheme,
@@ -3036,6 +3044,7 @@ function CommandMenu({
   onClose: () => void;
   onStartAgent: () => void;
   onPinnedArtifacts: () => void;
+  onProgressReports: () => void;
   onRefresh: () => void;
   onSettings: () => void;
   onToggleTheme: () => void;
@@ -3058,6 +3067,11 @@ function CommandMenu({
             icon={<RefreshCcw size={18} color={theme.colors.text} />}
             label="Refresh"
             onPress={onRefresh}
+          />
+          <MenuAction
+            icon={<BookOpen size={18} color={theme.colors.text} />}
+            label="Progress reports"
+            onPress={onProgressReports}
           />
           <MenuAction
             icon={<FileText size={18} color={theme.colors.text} />}
