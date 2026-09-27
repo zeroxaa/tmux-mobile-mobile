@@ -47,3 +47,17 @@ See the [Expo migration guide](https://github.com/expo/fyi/blob/main/ios-scene-l
 
 Runtime 7 requires a new native build (Expo 57.0.25 / React Native 0.86.3).
 Do not publish its JavaScript as an OTA for older runtime 6 binaries.
+
+## Paper style (2026-09-27)
+
+The Web and native clients share Instant’s warm paper / forest / orange visual
+language. `sources/theme.ts` owns native light/dark colors, rounded paper
+surfaces and serif display titles. Existing explicit theme preferences persist;
+a fresh install starts with the OS appearance. `logo.png` is the opaque app
+icon; `logo-mark.png` is the transparent adaptive/splash mark. iOS asset catalogs
+must be updated with the icon because this project is maintained by hand.
+
+Runtime 6 Android receives the styling-only backport on
+`release/paper-style-runtime6`, built from its existing lockfile. Runtime 7
+gets the new native APK/TestFlight icon and splash screen. Do not relabel
+runtime 7 JavaScript as runtime 6.

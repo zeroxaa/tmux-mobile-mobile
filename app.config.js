@@ -45,8 +45,8 @@ export default {
         "android.permission.POST_NOTIFICATIONS",
       ],
       adaptiveIcon: {
-        foregroundImage: "./logo.png",
-        backgroundColor: "#f5f4ed",
+        foregroundImage: "./logo-mark.png",
+        backgroundColor: "#f4eee3",
       },
     },
     web: {
@@ -88,12 +88,12 @@ export default {
       [
         "expo-splash-screen",
         {
-          backgroundColor: "#f5f4ed",
-          image: "./logo.png",
+          backgroundColor: "#f4eee3",
+          image: "./logo-mark.png",
           imageWidth: 96,
           dark: {
-            backgroundColor: "#141413",
-            image: "./logo.png",
+            backgroundColor: "#17231d",
+            image: "./logo-mark.png",
           },
         },
       ],
