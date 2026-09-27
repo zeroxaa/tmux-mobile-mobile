@@ -7825,6 +7825,7 @@ function StartAgentModal({
   const [cwd, setCwd] = React.useState("~");
   const [mux, setMux] = React.useState("tmux");
   const [sessionName, setSessionName] = React.useState("");
+  const initializedForOpen = React.useRef(false);
   const [activeVoiceField, setActiveVoiceField] = React.useState<"cwd" | "mux" | "session" | null>(null);
   const activeVoiceFieldRef = React.useRef<"cwd" | "mux" | "session" | null>(null);
   const [voiceStatus, setVoiceStatus] = React.useState("");
@@ -7875,7 +7876,14 @@ function StartAgentModal({
   );
 
   React.useEffect(() => {
-    if (!visible) return;
+    if (!visible) {
+      initializedForOpen.current = false;
+      return;
+    }
+    // Refreshes replace machines/selectedAgent while the user is editing.
+    // Seed defaults once per opening, never over an in-progress draft.
+    if (initializedForOpen.current) return;
+    initializedForOpen.current = true;
     const selectedMachineId = selectedAgent ? agentMachineKey(selectedAgent) : machineKey(machines[0]);
     const machine = machines.find((item) => machineKey(item) === selectedMachineId) || machines[0];
     setMachineId(machine ? machineKey(machine) : "local");
