@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   Alert,
   AppState,
+  Appearance,
   Animated,
   FlatList,
   Image,
@@ -801,7 +802,7 @@ function CommandCenterScreen() {
   const toggleCardStar = useToggleCardStar();
   const deleteWindow = useDeleteWindow();
   const pinCardResponse = usePinInlineArtifact();
-  const [themeMode, setThemeMode] = React.useState<ThemeMode>("dark");
+  const [themeMode, setThemeMode] = React.useState<ThemeMode>(() => Appearance.getColorScheme() === "dark" ? "dark" : "light");
   const [fontScaleLevel, setFontScaleLevel] = React.useState<FontScaleLevel>("standard");
   const [fontScaleLoaded, setFontScaleLoaded] = React.useState(false);
   const [visionControlsPreference, setVisionControlsPreference] =
@@ -8272,8 +8273,8 @@ function SheetModal({
 }
 
 function createMarkdownStyles(theme: AppTheme, fontScale = 1) {
-  const codeSurface = theme.dark ? "#141312" : "#f1efe6";
-  const blockquoteSurface = theme.dark ? "#23211d" : "#f0eee4";
+  const codeSurface = theme.colors.surfaceRaised;
+  const blockquoteSurface = theme.colors.surfaceMuted;
   const definitions = {
     body: {
       minWidth: 0,
@@ -8503,8 +8504,8 @@ function createStyles(
   title: {
     ...theme.typography.title,
     color: theme.colors.text,
-    fontSize: 19,
-    lineHeight: 23,
+    fontSize: 24,
+    lineHeight: 30,
   },
   headerMeta: {
     ...theme.typography.meta,
@@ -8736,11 +8737,10 @@ function createStyles(
 	  sessionGroupTitle: {
 	    ...theme.typography.meta,
 	    color: theme.colors.textMuted,
-	    fontFamily: "Lato_700Bold",
-	    fontSize: 11,
-	    lineHeight: 14,
-	    letterSpacing: 0.7,
-	    textTransform: "uppercase",
+	    fontFamily: theme.typography.title.fontFamily,
+	    fontSize: 16,
+	    lineHeight: 21,
+	    letterSpacing: 0,
 	    flexShrink: 1,
 	  },
 	  sessionGroupSubtitle: {
@@ -8759,7 +8759,7 @@ function createStyles(
 	    width: "100%",
 	    minWidth: 0,
 	    backgroundColor: theme.colors.surface,
-	    borderRadius: 14,
+	    borderRadius: theme.radii.lg,
 	    borderWidth: 1,
 	    borderColor: theme.colors.border,
 	    overflow: "hidden",
@@ -8810,7 +8810,7 @@ function createStyles(
 	    opacity: 0.62,
 	  },
 	  cardRunning: {
-	    borderColor: theme.dark ? "rgba(90, 150, 204, 0.42)" : "rgba(53, 89, 122, 0.42)",
+	    borderColor: theme.colors.orange,
 	  },
 	  cardSelected: {
 	    backgroundColor: theme.colors.surfaceRaised,
@@ -9204,7 +9204,7 @@ function createStyles(
   },
   actionButtonActive: {
     borderColor: theme.colors.accent,
-    backgroundColor: theme.dark ? "#162c3a" : "#e6f3ff",
+    backgroundColor: theme.colors.accentSoft,
   },
 	  newSessionFab: {
 	    position: "absolute",
@@ -9214,7 +9214,7 @@ function createStyles(
 	    borderRadius: 26,
 	    alignItems: "center",
 	    justifyContent: "center",
-	    backgroundColor: theme.dark ? "#f5f5f5" : "#202020",
+	    backgroundColor: theme.colors.accent,
 	    shadowColor: "#000000",
 	    shadowOpacity: 0.24,
 	    shadowRadius: 14,
@@ -9302,7 +9302,7 @@ function createStyles(
   },
   cardSearchResultActive: {
     borderColor: theme.colors.accent,
-    backgroundColor: theme.dark ? "#162c3a" : "#e6f3ff",
+    backgroundColor: theme.colors.accentSoft,
   },
   cardSearchResultTitle: {
     ...theme.typography.section,
@@ -9366,7 +9366,7 @@ function createStyles(
     borderRadius: theme.radii.lg,
     borderWidth: 1,
     borderColor: theme.colors.accent,
-    backgroundColor: theme.dark ? "#162c3a" : "#e6f3ff",
+    backgroundColor: theme.colors.accentSoft,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 8,
@@ -9401,7 +9401,7 @@ function createStyles(
   },
   visionPreferenceButtonActive: {
     borderColor: theme.colors.accent,
-    backgroundColor: theme.dark ? "#162c3a" : "#e6f3ff",
+    backgroundColor: theme.colors.accentSoft,
   },
   visionPreferenceButtonText: {
     ...theme.typography.section,
@@ -9832,7 +9832,7 @@ function createStyles(
     borderRadius: theme.radii.lg,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    backgroundColor: theme.dark ? "#0d0f12" : "#fbfbf8",
+    backgroundColor: theme.colors.surface,
   },
   sshTerminal: {
     flex: 1,
@@ -9889,7 +9889,7 @@ function createStyles(
   },
   visionVoiceButtonActive: {
     borderColor: theme.colors.accent,
-    backgroundColor: theme.dark ? "#162c3a" : "#e6f3ff",
+    backgroundColor: theme.colors.accentSoft,
   },
   visionVoiceButtonText: {
     ...theme.typography.section,
@@ -10159,7 +10159,7 @@ function createStyles(
   },
   paneComposerIconButtonActive: {
     borderColor: theme.colors.accent,
-    backgroundColor: theme.dark ? "#162c3a" : "#e6f3ff",
+    backgroundColor: theme.colors.accentSoft,
   },
   paneComposerToolButton: {
     minHeight: 44,
@@ -10173,7 +10173,7 @@ function createStyles(
   },
   paneComposerToolButtonActive: {
     borderColor: theme.colors.accent,
-    backgroundColor: theme.dark ? "#162c3a" : "#e6f3ff",
+    backgroundColor: theme.colors.accentSoft,
   },
   paneComposerInlineActions: {
     position: "absolute",
@@ -10206,7 +10206,7 @@ function createStyles(
   },
   paneComposerInlineButtonActive: {
     borderColor: theme.colors.accent,
-    backgroundColor: theme.dark ? "#162c3a" : "#e6f3ff",
+    backgroundColor: theme.colors.accentSoft,
   },
   paneComposerToolButtonText: {
     ...theme.typography.meta,
@@ -10764,7 +10764,7 @@ function createStyles(
     gap: 5,
   },
   sessionFollowButtonActive: {
-    backgroundColor: theme.dark ? "#172233" : "#e8f0ff",
+    backgroundColor: theme.colors.accentSoft,
   },
   sessionFollowText: {
     ...theme.typography.meta,
@@ -10782,7 +10782,7 @@ function createStyles(
     borderRadius: theme.radii.md,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    backgroundColor: theme.dark ? "#1e1e1e" : theme.colors.surfaceRaised,
+    backgroundColor: theme.colors.surfaceRaised,
     overflow: "hidden",
   },
   terminalLoadingIndicator: {
@@ -10967,7 +10967,7 @@ function createStyles(
   },
   pinRowPressed: {
     borderColor: theme.colors.accent,
-    backgroundColor: theme.dark ? "#162c3a" : "#e6f3ff",
+    backgroundColor: theme.colors.accentSoft,
   },
   pinTitleRow: {
     minWidth: 0,
@@ -11006,7 +11006,7 @@ function createStyles(
     borderRadius: theme.radii.lg,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    backgroundColor: theme.dark ? "#0d0d0c" : "#edece5",
+    backgroundColor: theme.colors.background,
     overflow: "hidden",
   },
   artifactImage: {

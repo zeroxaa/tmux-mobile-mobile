@@ -1,21 +1,23 @@
+import { Platform } from "react-native";
+
 const palette = {
-  canvas: "#f4f4f3",
-  panel: "#ffffff",
-  raised: "#e9e9e7",
-  line: "#d8d8d5",
-  accent: "#3b82f6",
-  text: "#202020",
-  muted: "#6f6f6b",
-  soft: "#ededeb",
-  success: "#22a65a",
-  warning: "#d58b12",
-  danger: "#dc3f3f",
-  darkCanvas: "#111111",
-  darkPaper: "#1a1a1a",
-  darkRaised: "#242424",
-  darkLine: "#2a2a2a",
-  darkText: "#e0e0e0",
-  darkMuted: "#8c8c8c",
+  canvas: "#f4eee3",
+  panel: "#fcf8ee",
+  raised: "#e8e4d6",
+  line: "#d4c7ab",
+  accent: "#264d3d",
+  text: "#293d2e",
+  muted: "#6e6e59",
+  soft: "#eae6d8",
+  success: "#48724b",
+  warning: "#a65c20",
+  danger: "#a54135",
+  darkCanvas: "#17231d",
+  darkPaper: "#203128",
+  darkRaised: "#2c3e32",
+  darkLine: "#485541",
+  darkText: "#f0eadc",
+  darkMuted: "#b7baa5",
 };
 
 export const spacing = {
@@ -32,16 +34,16 @@ export const spacing = {
 } as const;
 
 export const radii = {
-  sm: 4,
-  md: 6,
-  lg: 8,
-  xl: 12,
+  sm: 8,
+  md: 12,
+  lg: 18,
+  xl: 24,
   full: 999,
 } as const;
 
 export const typography = {
   title: {
-    fontFamily: "Lato_700Bold",
+    fontFamily: Platform.OS === "ios" ? "Georgia" : "serif",
     fontSize: 24,
     lineHeight: 30,
   },
@@ -81,6 +83,8 @@ export const lightTheme = {
     text: palette.text,
     textMuted: palette.muted,
     accent: palette.accent,
+    accentSoft: "#dfe6d2",
+    orange: "#e0914d",
     success: palette.success,
     warning: palette.warning,
     danger: palette.danger,
@@ -103,14 +107,16 @@ export const darkTheme = {
     background: palette.darkCanvas,
     surface: palette.darkPaper,
     surfaceRaised: palette.darkRaised,
-    surfaceMuted: "#202020",
+    surfaceMuted: "#1b2922",
     border: palette.darkLine,
     text: palette.darkText,
     textMuted: palette.darkMuted,
-    accent: "#3b82f6",
-    success: "#22c55e",
-    warning: "#f59e0b",
-    danger: "#ef4444",
+    accent: "#cad9b8",
+    accentSoft: "#354c3a",
+    orange: "#f0b575",
+    success: "#b4ce9d",
+    warning: "#f0b575",
+    danger: "#efa591",
     groupped: {
       background: palette.darkCanvas,
     },
