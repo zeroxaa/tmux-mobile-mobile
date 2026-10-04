@@ -4,7 +4,6 @@ import {
   ActivityIndicator,
   Alert,
   AppState,
-  Appearance,
   Animated,
   FlatList,
   Image,
@@ -21,6 +20,7 @@ import {
   View,
   StyleSheet,
   useWindowDimensions,
+  useColorScheme,
 } from "react-native";
 import type { StyleProp, TextInputProps, TextStyle } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -92,7 +92,6 @@ import {
   Minimize2,
   Minus,
   MoreVertical,
-  Moon,
   Pin,
   Play,
   PencilLine,
@@ -103,7 +102,6 @@ import {
   Star,
   Settings2,
   Smartphone,
-  Sun,
   Terminal,
   Trash2,
   Type,
@@ -264,7 +262,7 @@ const FOLD_SESSION_CARDS = shouldFoldSessionCards({
   isVision: Platform.OS === "ios" && Platform.isVision,
   visionDeviceDetected: NATIVE_VISION_CONTROLS_DETECTED,
 });
-type ThemeMode = "light" | "dark";
+type ThemeMode = "auto" | "light" | "dark";
 type MachineChipStats = {
   workingCount: number;
   unreadCount: number;
@@ -802,7 +800,10 @@ function CommandCenterScreen() {
   const toggleCardStar = useToggleCardStar();
   const deleteWindow = useDeleteWindow();
   const pinCardResponse = usePinInlineArtifact();
-  const [themeMode, setThemeMode] = React.useState<ThemeMode>(() => Appearance.getColorScheme() === "dark" ? "dark" : "light");
+  const systemColorScheme = useColorScheme();
+  const [themeMode, setThemeMode] = React.useState<ThemeMode>("auto");
+  const themeModeTouched = React.useRef(false);
+  const themeWrite = React.useRef(Promise.resolve());
   const [fontScaleLevel, setFontScaleLevel] = React.useState<FontScaleLevel>("standard");
   const [fontScaleLoaded, setFontScaleLoaded] = React.useState(false);
   const [visionControlsPreference, setVisionControlsPreference] =
@@ -861,7 +862,8 @@ function CommandCenterScreen() {
   const [copiedResponseKey, setCopiedResponseKey] = React.useState("");
   const [copiedPromptKey, setCopiedPromptKey] = React.useState("");
   const [pinningResponseKey, setPinningResponseKey] = React.useState("");
-  const theme = themeMode === "dark" ? darkTheme : lightTheme;
+  const effectiveThemeMode = themeMode === "auto" ? systemColorScheme : themeMode;
+  const theme = effectiveThemeMode === "dark" ? darkTheme : lightTheme;
   const fontScale = FONT_SCALE_VALUES[fontScaleLevel];
   const layout = React.useMemo(
     () => createResponsiveLayout(windowWidth, windowHeight, fontScale),
@@ -886,7 +888,7 @@ function CommandCenterScreen() {
     let mounted = true;
     AsyncStorage.getItem(THEME_MODE_KEY)
       .then((value) => {
-        if (mounted && (value === "light" || value === "dark")) setThemeMode(value);
+        if (mounted && !themeModeTouched.current && (value === "auto" || value === "light" || value === "dark")) setThemeMode(value);
       })
       .catch(() => {});
     return () => {
@@ -1125,13 +1127,11 @@ function CommandCenterScreen() {
     void auth.signOut();
   }, [auth]);
 
-  const toggleTheme = React.useCallback(() => {
-    setMenuVisible(false);
-    setThemeMode((current) => {
-      const next = current === "dark" ? "light" : "dark";
-      AsyncStorage.setItem(THEME_MODE_KEY, next).catch(() => {});
-      return next;
-    });
+  const updateThemeMode = React.useCallback((next: ThemeMode) => {
+    themeModeTouched.current = true;
+    setThemeMode(next);
+    themeWrite.current = themeWrite.current
+      .then(() => AsyncStorage.setItem(THEME_MODE_KEY, next)).catch(() => {});
     void Haptics.selectionAsync();
   }, []);
 
@@ -1944,7 +1944,7 @@ function CommandCenterScreen() {
         onPinnedArtifacts={openPinnedArtifacts}
         onRefresh={refreshCommandCenter}
         onSettings={openSettings}
-        onToggleTheme={toggleTheme}
+        onThemeModeChange={updateThemeMode}
         themeMode={themeMode}
         onSignOut={signOut}
       />
@@ -3026,7 +3026,7 @@ function CommandMenu({
   onPinnedArtifacts,
   onRefresh,
   onSettings,
-  onToggleTheme,
+  onThemeModeChange,
   themeMode,
   onSignOut,
 }: {
@@ -3039,17 +3039,20 @@ function CommandMenu({
   onPinnedArtifacts: () => void;
   onRefresh: () => void;
   onSettings: () => void;
-  onToggleTheme: () => void;
+  onThemeModeChange: (next: ThemeMode) => void;
   themeMode: ThemeMode;
   onSignOut: () => void;
 }) {
   const theme = useAppTheme();
   const styles = useAppStyles();
+  const { height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.menuLayer}>
         <Pressable accessibilityLabel="Close command menu" style={styles.menuBackdrop} onPress={onClose} />
-        <View style={[styles.menuPanel, { marginTop: topOffset }]}>
+        <View style={[styles.menuPanel, { marginTop: topOffset, maxHeight: Math.max(140, height - topOffset - insets.bottom - 12) }]} >
+          <ScrollView bounces={false} style={{ flexGrow: 0 }}>
           <MenuAction
             icon={<Play size={18} color={theme.colors.accent} />}
             label="Start agent"
@@ -3070,17 +3073,22 @@ function CommandMenu({
             label="Settings & updates"
             onPress={onSettings}
           />
-          <MenuAction
-            icon={
-              themeMode === "dark" ? (
-                <Sun size={18} color={theme.colors.text} />
-              ) : (
-                <Moon size={18} color={theme.colors.text} />
-              )
-            }
-            label={themeMode === "dark" ? "Light theme" : "Dark theme"}
-            onPress={onToggleTheme}
-          />
+          <View style={{ paddingHorizontal: 12, paddingVertical: 6, gap: 8 }}>
+            <Text style={[styles.menuActionText, { color: theme.colors.textMuted }]}>Theme</Text>
+            <View style={styles.segmentRow}>
+              {(["auto", "light", "dark"] as const).map((mode) => (
+                <Pressable key={mode} accessibilityRole="radio"
+                  accessibilityLabel={mode === "auto" ? "Follow system theme" : `${mode} theme`}
+                  accessibilityState={{ checked: themeMode === mode }}
+                  style={[styles.segment, themeMode === mode ? styles.segmentActive : null]}
+                  onPress={() => onThemeModeChange(mode)}>
+                  <Text style={[styles.segmentText, themeMode === mode ? styles.segmentTextActive : null]}>
+                    {mode === "auto" ? "Auto" : mode === "light" ? "Light" : "Dark"}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
           <View style={styles.menuDivider} />
           <Text style={[styles.menuActionText, { paddingHorizontal: 12, color: theme.colors.textMuted }]}>Sort cards · Starred first</Text>
           {(["current", "recent"] as const).map((option) => (
@@ -3100,6 +3108,7 @@ function CommandMenu({
             danger
             onPress={onSignOut}
           />
+          </ScrollView>
         </View>
       </View>
     </Modal>
