@@ -1,4 +1,4 @@
-export type AgentKind = "claude" | "codex" | "gemini" | string;
+export type AgentKind = "claude" | "codex" | "pi" | "gemini" | string;
 export type AgentStatus = "running" | "idle" | "waiting" | "unverified" | string;
 
 export interface TmuxMobileUser {

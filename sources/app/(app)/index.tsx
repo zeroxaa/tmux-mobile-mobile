@@ -1728,7 +1728,7 @@ function CommandCenterScreen() {
             <Terminal size={28} color={theme.colors.textMuted} />
             <Text style={styles.emptyTitle}>No agent sessions</Text>
             <Text style={styles.emptyText}>
-              Start Codex or Claude on one of the connected machines.
+              Start Codex, Claude or Pi on one of the connected machines.
             </Text>
           </View>
         }
@@ -1991,7 +1991,7 @@ function LoginScreen() {
         <Image source={APP_LOGO} style={styles.loginLogo} resizeMode="contain" accessible={false} />
         <Text style={styles.loginTitle}>AMUX</Text>
         <Text style={styles.loginText}>
-          Native command center for Codex and Claude sessions running through tmux-mobile.
+          Native command center for Codex, Claude and Pi sessions running through tmux-mobile.
         </Text>
         {controllerPresentation === "voice" ? (
           <VoiceValueField
