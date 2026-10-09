@@ -13,7 +13,7 @@ First screen:
 
 - Machine filter
 - Agent session cards
-- Start Codex/Claude in a machine directory
+- Start Codex/Claude/Pi in a machine directory
 - Send text to a pane
 - Rename tmux/rmux window
 - View pane tail
