@@ -7830,7 +7830,7 @@ function StartAgentModal({
   const sessionNamePresentation = useFieldPresentation("agent-session-name");
   const startAgent = useStartAgent();
   const [machineId, setMachineId] = React.useState("");
-  const [kind, setKind] = React.useState<"claude" | "codex">("codex");
+  const [kind, setKind] = React.useState<"claude" | "codex" | "pi">("codex");
   const [cwd, setCwd] = React.useState("~");
   const [mux, setMux] = React.useState("tmux");
   const [sessionName, setSessionName] = React.useState("");
@@ -7896,7 +7896,7 @@ function StartAgentModal({
     const selectedMachineId = selectedAgent ? agentMachineKey(selectedAgent) : machineKey(machines[0]);
     const machine = machines.find((item) => machineKey(item) === selectedMachineId) || machines[0];
     setMachineId(machine ? machineKey(machine) : "local");
-    setKind(selectedAgent?.kind === "claude" ? "claude" : "codex");
+    setKind(selectedAgent?.kind === "pi" ? "pi" : selectedAgent?.kind === "claude" ? "claude" : "codex");
     setCwd(selectedAgent?.cwd || machine?.agentCwd || machine?.homeDir || "~");
     setMux(selectedAgent?.mux || machine?.mux || machine?.muxes?.[0]?.mux || "tmux");
     setSessionName("");
@@ -7911,6 +7911,7 @@ function StartAgentModal({
       <View style={styles.segmentRow}>
         <Segment active={kind === "codex"} label="Codex" onPress={() => setKind("codex")} />
         <Segment active={kind === "claude"} label="Claude" onPress={() => setKind("claude")} />
+        <Segment active={kind === "pi"} label="Pi" onPress={() => setKind("pi")} />
       </View>
       <Text style={styles.inputLabel}>Machine</Text>
       <ScrollView
