@@ -282,7 +282,7 @@ export function useStartAgent() {
   return useMutation({
     mutationFn: async (input: {
       machineId: string;
-      kind: "claude" | "codex";
+      kind: "claude" | "codex" | "pi";
       cwd: string;
       mux: string;
       sessionName?: string;

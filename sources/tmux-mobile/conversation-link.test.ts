@@ -11,3 +11,8 @@ describe('conversation links', () => {
     expect(conversationPath({machineId:'machine',kind:'claude'})).toBeNull();
   });
 });
+
+// Pi uses the same permission-bound conversation route as the other agents.
+it('links Pi histories', () => {
+  expect(conversationPath({machineId:'machine',kind:'pi',agentSessionId:'pi-session'})).toContain('kind=pi');
+});
