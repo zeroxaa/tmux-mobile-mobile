@@ -1,3 +1,4 @@
+import { NotificationSettings } from "@/tmux-mobile/notification-settings";
 import { conversationPath } from "@/tmux-mobile/conversation-link";
 import * as React from "react";
 import {
@@ -3242,6 +3243,7 @@ function SettingsModal({
 
   return (
     <SheetModal visible={visible} title="Settings & updates" onClose={onClose}>
+      <NotificationSettings visible={visible} theme={theme} />
       <View style={styles.settingsSection}>
         <View style={styles.updateStatusCard}>
           <View style={styles.updateStatusIcon}>{statusIcon}</View>
